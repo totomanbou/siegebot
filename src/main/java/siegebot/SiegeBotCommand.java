@@ -20,7 +20,7 @@ public final class SiegeBotCommand implements TabExecutor {
     private static final String PREFIX = "[SiegeBot] ";
     private static final Pattern BOT_NAME = Pattern.compile("[A-Za-z0-9_]{1,16}");
     private static final List<String> SUBS = List.of(
-            "help", "spawn", "remove", "list", "spawnpoint", "set", "tp", "protect", "debug", "reload");
+            "help", "revive", "spawn", "remove", "list", "spawnpoint", "set", "tp", "protect", "debug", "reload");
     private static final List<String> SIDES = List.of("attack", "defend");
     private static final List<String> STANCES = List.of("push", "guard");
 
@@ -36,6 +36,7 @@ public final class SiegeBotCommand implements TabExecutor {
         switch (sub) {
             case "help" -> help(sender);
             case "spawn" -> spawn(sender, args);
+            case "revive" -> revive(sender, args);
             case "remove" -> remove(sender, args);
             case "list" -> list(sender);
             case "spawnpoint" -> spawnpoint(sender, args);
@@ -61,6 +62,7 @@ public final class SiegeBotCommand implements TabExecutor {
 
     private void help(CommandSender sender) {
         msg(sender, "コマンド一覧:");
+        msg(sender, "/sb revive <プレイヤー|@p|@a|bots|all> - ボットを出す・蘇生する（コマンドブロック用）");
         msg(sender, "/sb spawn <名前> <attack|defend> - 持ち主のいないボットを出す（出した地点を守る）");
         msg(sender, "/sb remove <名前> - ボットを消す");
         msg(sender, "/sb list - ボットの一覧");
@@ -97,6 +99,78 @@ public final class SiegeBotCommand implements TabExecutor {
         msg(sender, "ボット " + name + "（" + side.label() + "）を出しました。" + bot.order().describe());
     }
 
+    /**
+     * ボットを出す・蘇生する。コマンドブロックのボタンから呼ぶ想定（ボットは自動では出ない・復活しない）。
+     * <ul>
+     *   <li>プレイヤー名・セレクタ（@p、@a、@a[team=attack] など）: その人の専用のボットを、なければ出し、倒れていれば蘇生する</li>
+     *   <li>bots: /sb spawn で出した持ち主のいないボットのうち、倒れているものを蘇生する</li>
+     *   <li>all: オンラインの全員の専用のボットと、持ち主のいないボット</li>
+     * </ul>
+     */
+    private void revive(CommandSender sender, String[] args) {
+        if (args.length != 2) {
+            msg(sender, "使い方: /sb revive <プレイヤー|@p|@a|bots|all>");
+            return;
+        }
+        String arg = args[1];
+        boolean all = arg.equalsIgnoreCase("all");
+        List<Player> players = new ArrayList<>();
+        if (all) {
+            players.addAll(Bukkit.getOnlinePlayers());
+        } else if (arg.startsWith("@")) {
+            try {
+                for (org.bukkit.entity.Entity e : Bukkit.selectEntities(sender, arg)) {
+                    if (e instanceof Player p && plugin.bots().byEntity(p) == null) {
+                        players.add(p);
+                    }
+                }
+            } catch (IllegalArgumentException e) {
+                msg(sender, "セレクタが正しくありません: " + arg);
+                return;
+            }
+        } else if (!arg.equalsIgnoreCase("bots")) {
+            Player p = Bukkit.getPlayerExact(arg);
+            if (p == null) {
+                msg(sender, "プレイヤー " + arg + " はオンラインではありません。");
+                return;
+            }
+            players.add(p);
+        }
+
+        Map<BotManager.ReviveResult, List<String>> results = new LinkedHashMap<>();
+        for (Player p : players) {
+            results.computeIfAbsent(plugin.bots().revive(p), k -> new ArrayList<>()).add(p.getName());
+        }
+        int adminRevived = 0;
+        if (all || arg.equalsIgnoreCase("bots")) {
+            for (SoldierBot b : plugin.bots().all()) {
+                if (b.owner() == null && plugin.bots().reviveBot(b)) {
+                    adminRevived++;
+                }
+            }
+        }
+
+        List<String> parts = new ArrayList<>();
+        for (Map.Entry<BotManager.ReviveResult, List<String>> e : results.entrySet()) {
+            String label = switch (e.getKey()) {
+                case SPAWNED -> "出した";
+                case REVIVED -> "蘇生した";
+                case ALREADY_ALIVE -> "生きている";
+                case NO_TEAM -> "チームなし";
+                case NO_PLACE -> "出す場所がない";
+                case DISABLED -> "専用のボットが無効";
+            };
+            if (all && e.getKey() == BotManager.ReviveResult.NO_TEAM) {
+                continue; // all のときチーム外の人は数えない
+            }
+            parts.add(label + " " + e.getValue().size() + "人（" + String.join("、", e.getValue()) + "）");
+        }
+        if (all || arg.equalsIgnoreCase("bots")) {
+            parts.add("持ち主のいないボットを蘇生 " + adminRevived + "体");
+        }
+        msg(sender, parts.isEmpty() ? "対象のプレイヤーがいません。" : String.join(" / ", parts));
+    }
+
     private void remove(CommandSender sender, String[] args) {
         if (args.length != 2) {
             msg(sender, "使い方: /sb remove <名前>");
@@ -120,7 +194,7 @@ public final class SiegeBotCommand implements TabExecutor {
         for (SoldierBot b : plugin.bots().all()) {
             String owner = b.owner() == null ? "持ち主なし" : "持ち主 " + Bukkit.getOfflinePlayer(b.owner()).getName();
             msg(sender, b.name() + " [" + b.side().label() + "・" + owner + "] " + b.order().describe()
-                    + " / " + (b.alive() ? "生存" : "復活待ち"));
+                    + " / " + (b.alive() ? "生存" : "倒れている"));
         }
     }
 
@@ -148,14 +222,14 @@ public final class SiegeBotCommand implements TabExecutor {
             msg(sender, "使い方: /sb spawnpoint <attack|defend> [clear | x y z]");
             for (Side s : Side.values()) {
                 Point p = plugin.data().spawns().get(s);
-                msg(sender, s.label() + ": " + (p == null ? "未設定（持ち主の横で復活）" : p.world() + " " + p.coords()));
+                msg(sender, s.label() + ": " + (p == null ? "未設定（持ち主の横に出る）" : p.world() + " " + p.coords()));
             }
             return;
         }
         if (args.length == 3 && args[2].equalsIgnoreCase("clear")) {
             plugin.data().spawns().remove(side);
             plugin.data().save();
-            msg(sender, side.label() + "のリスポーン地点を消しました（持ち主の横で復活します）。");
+            msg(sender, side.label() + "のリスポーン地点を消しました（ボットは持ち主の横に出ます）。");
             return;
         }
         if (!(sender instanceof Player p)) {
@@ -293,7 +367,7 @@ public final class SiegeBotCommand implements TabExecutor {
         for (SoldierBot b : plugin.bots().all()) {
             StringBuilder sb = new StringBuilder(b.name()).append(" [").append(b.side().key()).append("] ");
             if (!b.alive()) {
-                msg(sender, sb.append("復活待ち").toString());
+                msg(sender, sb.append("倒れている").toString());
                 continue;
             }
             Location l = b.npc.getEntity().getLocation();
@@ -332,6 +406,7 @@ public final class SiegeBotCommand implements TabExecutor {
             case "" -> SUBS;
             case "spawn" -> n == 3 ? SIDES : List.of();
             case "remove", "tp" -> n == 2 ? botNames(false) : List.of();
+            case "revive" -> n == 2 ? reviveTargets() : List.of();
             case "protect" -> n == 2 ? botNames(false) : n == 3 ? List.of("on", "off") : List.of();
             case "spawnpoint" -> n == 2 ? SIDES : n == 3 ? List.of("clear") : List.of();
             case "set" -> completeSet(args);
@@ -367,6 +442,14 @@ public final class SiegeBotCommand implements TabExecutor {
             return n == 5 ? STANCES : List.of();
         }
         return n == 4 ? STANCES : List.of();
+    }
+
+    private List<String> reviveTargets() {
+        List<String> r = new ArrayList<>(List.of("@p", "@a", "bots", "all"));
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            r.add(p.getName());
+        }
+        return r;
     }
 
     private List<String> botNames(boolean withAll) {

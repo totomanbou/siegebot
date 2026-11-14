@@ -59,7 +59,7 @@ public final class PlayerCommand implements TabExecutor {
             return true;
         }
         if (targets(p, side).isEmpty()) {
-            tell(p, personal() ? "あなたのボットはまだいません（チームに入って数秒で出ます）。"
+            tell(p, personal() ? "あなたのボットはいません（コマンドブロックで呼び出してください）。"
                     : side.label() + "のボットがいません。", NamedTextColor.RED);
             return true;
         }
@@ -193,7 +193,7 @@ public final class PlayerCommand implements TabExecutor {
             tell(p, "指示する相手: " + (cur == null ? "全員" : cur), NamedTextColor.GRAY);
         }
         for (SoldierBot b : targets(p, side)) {
-            tell(p, b.name() + "：" + b.order().describe() + (b.alive() ? "" : "（復活待ち）"), NamedTextColor.WHITE);
+            tell(p, b.name() + "：" + b.order().describe() + (b.alive() ? "" : "（倒れている）"), NamedTextColor.WHITE);
         }
     }
 

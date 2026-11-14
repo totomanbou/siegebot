@@ -15,8 +15,6 @@ public final class SoldierBot {
 
     /** 今の方針。出すときに {@link BotManager} が決める（持ち主への追従か、出した地点を守る）。 */
     Order order;
-    /** 次にリスポーンする時刻（サーバーの tick）。0 は未予約。 */
-    long respawnAtTick;
     LivingEntity target;
     /** 最後に狙いを選び直した時刻（サーバーの tick）。 */
     long lastRetargetTick;

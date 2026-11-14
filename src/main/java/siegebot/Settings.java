@@ -23,7 +23,6 @@ public final class Settings {
     public final double guardLeash;
     public final double followDistance;
     public final double arriveRadius;
-    public final int respawnSeconds;
     public final float pathRange;
     public final float speed;
     /** 狙いを選び直す間隔（tick）。 */
@@ -51,7 +50,6 @@ public final class Settings {
         guardLeash = c.getDouble("combat.guard-leash", 8);
         followDistance = c.getDouble("combat.follow-distance", 4);
         arriveRadius = c.getDouble("combat.arrive-radius", 3);
-        respawnSeconds = Math.max(0, c.getInt("combat.respawn-seconds", 10));
         pathRange = (float) c.getDouble("combat.path-range", 96);
         speed = (float) c.getDouble("combat.speed", 1.5);
         damageMultiplier = Math.max(0.0, c.getDouble("combat.damage-multiplier", 1.2));

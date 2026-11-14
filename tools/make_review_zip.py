@@ -16,7 +16,7 @@ DOCS = Path(sys.argv[1])
 OUT = ROOT / "SiegeBot-本サーバー用.zip"
 
 PLUGINS = {
-    "plugins/SiegeBot-0.2.1.jar": ROOT / "target" / "SiegeBot-0.2.1.jar",
+    "plugins/SiegeBot-0.3.0.jar": ROOT / "target" / "SiegeBot-0.3.0.jar",
     "plugins/Citizens.jar": ROOT / "testserver" / "plugins" / "Citizens.jar",
     "plugins/ItemJoin.jar": ROOT / "testserver" / "plugins" / "ItemJoin.jar",
     "plugins/ItemJoin/items.yml": ROOT / "itemjoin" / "items.yml",

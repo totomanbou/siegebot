@@ -17,6 +17,15 @@ public final class GameListener implements Listener {
     }
 
 
+    /** 持ち主が倒れたら、その専用のボットも倒す（自動では復活しない）。 */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onOwnerDeath(org.bukkit.event.entity.PlayerDeathEvent event) {
+        if (plugin.bots().byEntity(event.getEntity()) != null) {
+            return; // ボット自身（プレイヤーの姿の NPC）の死では何もしない
+        }
+        plugin.bots().killOwnedBot(event.getEntity().getUniqueId());
+    }
+
     /** 抜けたプレイヤーの専用のボットを消す。 */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onQuit(org.bukkit.event.player.PlayerQuitEvent event) {

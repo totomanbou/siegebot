@@ -27,6 +27,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
+import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
@@ -190,8 +191,8 @@ public final class BotManager {
     }
 
     /**
-     * 専用のボットを、オンラインのプレイヤーとチームに合わせる。
-     * チームに入っていて専用のボットがない人には出し、チームを抜けた・移った人のボットは消す（移った人には出し直す）。
+     * 専用のボットを、オンラインのプレイヤーとチームに合わせる。チームを抜けた・移った人と、退出した人のボットを消す。
+     * 新しく出すことはしない（出すのは {@link #revive} だけ。コマンドブロックの /sb revive から呼ぶ）。
      */
     public void syncPersonalBots() {
         if (!plugin.settings().personalBots) {
@@ -209,19 +210,81 @@ public final class BotManager {
             SoldierBot mine = ownedBy(p.getUniqueId());
             if (mine != null && mine.side != side) {
                 remove(mine.name);
-                mine = null;
-            }
-            if (mine == null && side != null) {
-                SoldierBot b = spawn(personalName(p.getName()), side, p.getLocation(), p.getUniqueId(), p.getName());
-                if (b != null) {
-                    say(b, p.getName() + " の兵として参戦する");
-                }
             }
         }
         for (SoldierBot b : new ArrayList<>(bots.values())) {
             if (b.owner != null && !online.contains(b.owner)) {
                 remove(b.name);
             }
+        }
+    }
+
+    /** {@link #revive} の結果。 */
+    public enum ReviveResult {
+        /** 初めて出した */
+        SPAWNED,
+        /** 倒れていたのを蘇生した */
+        REVIVED,
+        /** もう生きている（何もしない） */
+        ALREADY_ALIVE,
+        /** 攻め・守りのどちらのチームにも入っていない */
+        NO_TEAM,
+        /** 出す場所が決まらない（ワールドが読み込まれていないなど） */
+        NO_PLACE,
+        /** personal-bots.enabled が false */
+        DISABLED
+    }
+
+    /**
+     * プレイヤーの専用のボットを出す。まだなければ新しく出し（持ち主に追従）、倒れていれば蘇生する（方針はそのまま）。
+     * 出す場所は陣営のリスポーン地点、未設定ならプレイヤーのいる所。
+     */
+    public ReviveResult revive(Player p) {
+        if (!plugin.settings().personalBots) {
+            return ReviveResult.DISABLED;
+        }
+        Side side = sideOf(p);
+        if (side == null) {
+            return ReviveResult.NO_TEAM;
+        }
+        SoldierBot mine = ownedBy(p.getUniqueId());
+        if (mine != null && mine.side != side) {
+            remove(mine.name);
+            mine = null;
+        }
+        if (mine == null) {
+            SoldierBot b = spawn(personalName(p.getName()), side, p.getLocation(), p.getUniqueId(), p.getName());
+            if (b == null) {
+                return ReviveResult.NO_PLACE;
+            }
+            say(b, p.getName() + " の兵として参戦する");
+            return ReviveResult.SPAWNED;
+        }
+        if (mine.npc.isSpawned()) {
+            return ReviveResult.ALREADY_ALIVE;
+        }
+        return reviveBot(mine) ? ReviveResult.REVIVED : ReviveResult.NO_PLACE;
+    }
+
+    /** 倒れているボットを出し直す（方針はそのまま）。生きていれば何もせず false。 */
+    public boolean reviveBot(SoldierBot bot) {
+        if (bot.npc.isSpawned()) {
+            return false;
+        }
+        Location at = respawnLocation(bot);
+        if (at == null || !bot.npc.spawn(at, SpawnReason.RESPAWN)) {
+            return false;
+        }
+        bot.target = null;
+        say(bot, "復活した");
+        return true;
+    }
+
+    /** 持ち主が倒れたら、そのボットも倒す。倒れたボットは /sb revive まで倒れたまま。 */
+    public void killOwnedBot(UUID owner) {
+        SoldierBot b = ownedBy(owner);
+        if (b != null && b.npc.isSpawned() && b.npc.getEntity() instanceof LivingEntity le) {
+            le.setHealth(0.0);
         }
     }
 
@@ -317,7 +380,47 @@ public final class BotManager {
         if (b != null) {
             return b.side;
         }
-        return e instanceof Player p ? sideOf(p) : null;
+        if (e instanceof Player p) {
+            return sideOf(p);
+        }
+        // モブはスコアボードのチームに UUID で入る（/team join <チーム> <セレクタ>）
+        Team t = Bukkit.getScoreboardManager().getMainScoreboard().getEntryTeam(e.getUniqueId().toString());
+        return sideOfTeam(t);
+    }
+
+    private Side sideOfTeam(Team t) {
+        if (t == null) {
+            return null;
+        }
+        for (Side s : Side.values()) {
+            if (t.getName().equalsIgnoreCase(plugin.settings().teamName(s))) {
+                return s;
+            }
+        }
+        return null;
+    }
+
+    /** その陣営のチームに入っているモブ（プレイヤーとボットと防具立てを除く、生きている読み込み済みのもの）。 */
+    private List<LivingEntity> mobs(Side side) {
+        List<LivingEntity> r = new ArrayList<>();
+        Team t = Bukkit.getScoreboardManager().getMainScoreboard().getTeam(plugin.settings().teamName(side));
+        if (t == null) {
+            return r;
+        }
+        for (String entry : t.getEntries()) {
+            UUID id;
+            try {
+                id = UUID.fromString(entry);
+            } catch (IllegalArgumentException notUuid) {
+                continue; // プレイヤー名の登録
+            }
+            Entity e = Bukkit.getEntity(id);
+            if (e instanceof LivingEntity le && !(e instanceof Player) && !(e instanceof ArmorStand)
+                    && byEntity(e) == null && le.isValid() && !le.isDead()) {
+                r.add(le);
+            }
+        }
+        return r;
     }
 
     public List<Player> humans(Side side) {
@@ -350,7 +453,7 @@ public final class BotManager {
         return p == null ? null : p.toLocation();
     }
 
-    /** 倒されたボットを出し直す場所: リスポーン地点、なければ持ち主の横、なければ最後にいた所。 */
+    /** 倒れたボットを出し直す場所: リスポーン地点、なければ持ち主の横、なければ最後にいた所。 */
     private Location respawnLocation(SoldierBot bot) {
         Location l = spawnLocation(bot.side);
         if (l != null) {
@@ -433,18 +536,8 @@ public final class BotManager {
         NPC npc = bot.npc;
         if (!npc.isSpawned()) {
             bot.target = null;
-            if (bot.respawnAtTick == 0) {
-                bot.respawnAtTick = now + plugin.settings().respawnSeconds * 20L;
-            }
-            if (now >= bot.respawnAtTick) {
-                Location at = respawnLocation(bot);
-                if (at != null && npc.spawn(at, SpawnReason.RESPAWN)) {
-                    bot.respawnAtTick = 0;
-                }
-            }
-            return;
+            return; // 倒れたボットは自動では復活しない（/sb revive で出し直す）
         }
-        bot.respawnAtTick = 0;
         if (!(npc.getEntity() instanceof LivingEntity self)) {
             return;
         }
@@ -544,6 +637,7 @@ public final class BotManager {
         return d2 <= SENSE_RADIUS * SENSE_RADIUS || self.hasLineOfSight(e);
     }
 
+    /** 敵: 敵の陣営のプレイヤー・ボットと、敵のチームに入っているモブ。 */
     private List<LivingEntity> enemies(Side side) {
         List<LivingEntity> r = new ArrayList<>(humans(side.opposite()));
         for (SoldierBot b : of(side.opposite())) {
@@ -551,6 +645,7 @@ public final class BotManager {
                 r.add(le);
             }
         }
+        r.addAll(mobs(side.opposite()));
         return r;
     }
 }
