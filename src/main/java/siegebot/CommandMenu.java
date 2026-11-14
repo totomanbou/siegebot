@@ -24,15 +24,15 @@ import org.bukkit.inventory.meta.ItemMeta;
  * 指揮メニュー（チェストの画面）。/sbc menu で開く。ItemJoin の指揮棒の右クリックから呼ぶ想定。
  *
  * <pre>
- * 1 段目: 指示する相手（全員・ボット 1 体ずつ）          … 押すと選び直して、画面はそのまま
- * 2 段目: ついてこい・前線へ・ここを守れ・下がれ        … 押すと指示して画面を閉じる
- * 3 段目: 登録した場所を守らせる（最大 9 か所）        … 押すと指示して画面を閉じる
- * 4 段目: 構え（積極的・持ち場優先）・閉じる          … 構えは押すと変えて、画面はそのまま
+ * 1 段目: 自分のボットの状態（専用のボットが無効なら、指示する相手の選択）
+ * 2 段目: ついてこい・視点の先を守れ                  … 押すと指示して画面を閉じる
+ * 3 段目: 構え（積極的・持ち場優先）・閉じる          … 構えは押すと変えて、画面はそのまま
  * </pre>
+ * 今の動き・構えのボタンは光る。
  */
 public final class CommandMenu implements Listener {
 
-    private static final int SIZE = 36;
+    private static final int SIZE = 27;
 
     /** この画面の印。押されたマス → 処理。 */
     private static final class Holder implements InventoryHolder {
@@ -90,44 +90,27 @@ public final class CommandMenu implements Listener {
         }
 
         // ---- 2 段目: 動き ----
-        put(h, 10, button(Material.LEAD, "ついてこい", NamedTextColor.GREEN, false,
+        List<SoldierBot> targets = commands.targets(p, side);
+        Order.Mode mode = commonMode(targets);
+        put(h, 11, button(Material.LEAD, "ついてこい", NamedTextColor.GREEN, mode == Order.Mode.FOLLOW,
                 List.of(who + "を自分についてこさせる")), () -> act(p, () -> commands.follow(p, side)));
-        put(h, 12, button(Material.IRON_SWORD, "前線へ", NamedTextColor.RED, false,
-                List.of(who + "を今の前線で戦わせる", "門が開くと次の前線へ移る")), () -> act(p, () -> commands.front(p, side)));
-        put(h, 14, button(Material.WHITE_BANNER, "ここを守れ", NamedTextColor.YELLOW, false,
-                List.of(who + "に今立っている場所を守らせる")), () -> act(p, () -> commands.here(p, side)));
-        put(h, 16, button(Material.RED_BED, "下がれ", NamedTextColor.LIGHT_PURPLE, false,
-                List.of(who + "をリスポーン地点まで下がらせる")), () -> act(p, () -> commands.retreat(p, side)));
+        put(h, 15, button(Material.SPYGLASS, "視点の先を守れ", NamedTextColor.YELLOW, mode == Order.Mode.HOLD,
+                List.of(who + "に、メニューを開いたときに", "見ていたブロックの所を守らせる")),
+                () -> act(p, () -> commands.holdLookPoint(p, side)));
 
-        // ---- 3 段目: 登録した場所 ----
-        int slot = 18;
-        for (SiegeData.Place pl : plugin.data().places().values()) {
-            if (slot > 26) {
-                break;
-            }
-            String name = pl.name();
-            List<String> lore = new ArrayList<>();
-            lore.add(who + "に「" + name + "」を守らせる");
-            if (!pl.aliases().isEmpty()) {
-                lore.add("別名: " + String.join("、", pl.aliases()));
-            }
-            put(h, slot++, button(Material.OAK_SIGN, "「" + name + "」を守れ", NamedTextColor.WHITE, false, lore),
-                    () -> act(p, () -> commands.holdPlace(p, side, name)));
-        }
-
-        // ---- 4 段目: 構え・閉じる ----
-        Order.Stance common = commonStance(commands.targets(p, side));
-        put(h, 29, button(Material.BLAZE_POWDER, "構え: 積極的", NamedTextColor.GOLD, common == Order.Stance.PUSH,
-                List.of("広い範囲の敵を追いかける", "動き（前線・場所・追従）は変えない")), () -> {
+        // ---- 3 段目: 構え・閉じる ----
+        Order.Stance common = commonStance(targets);
+        put(h, 20, button(Material.BLAZE_POWDER, "構え: 積極的", NamedTextColor.GOLD, common == Order.Stance.PUSH,
+                List.of("広い範囲の敵を追いかける", "動き（追従・守る地点）は変えない")), () -> {
                     commands.setStance(p, side, Order.Stance.PUSH);
                     open(p, side);
                 });
-        put(h, 33, button(Material.SHIELD, "構え: 持ち場優先", NamedTextColor.BLUE, common == Order.Stance.GUARD,
-                List.of("持ち場の近くの敵とだけ戦う", "動き（前線・場所・追従）は変えない")), () -> {
+        put(h, 24, button(Material.SHIELD, "構え: 持ち場優先", NamedTextColor.BLUE, common == Order.Stance.GUARD,
+                List.of("持ち場の近くの敵とだけ戦う", "動き（追従・守る地点）は変えない")), () -> {
                     commands.setStance(p, side, Order.Stance.GUARD);
                     open(p, side);
                 });
-        put(h, 31, button(Material.BARRIER, "閉じる", NamedTextColor.GRAY, false, List.of()), p::closeInventory);
+        put(h, 22, button(Material.BARRIER, "閉じる", NamedTextColor.GRAY, false, List.of()), p::closeInventory);
 
         p.openInventory(inv);
     }
@@ -135,6 +118,19 @@ public final class CommandMenu implements Listener {
     private void act(Player p, Runnable action) {
         p.closeInventory();
         action.run();
+    }
+
+    /** 全員が同じ動きならその動き、ばらばらなら null。 */
+    private static Order.Mode commonMode(List<SoldierBot> bots) {
+        Order.Mode m = null;
+        for (SoldierBot b : bots) {
+            if (m == null) {
+                m = b.order().mode();
+            } else if (m != b.order().mode()) {
+                return null;
+            }
+        }
+        return m;
     }
 
     private static Order.Stance commonStance(List<SoldierBot> bots) {

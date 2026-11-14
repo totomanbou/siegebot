@@ -2,9 +2,10 @@ package siegebot;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.EnumMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -20,6 +21,7 @@ import net.citizensnpcs.api.trait.trait.Equipment;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
+import org.bukkit.FluidCollisionMode;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -31,13 +33,14 @@ import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.scoreboard.Team;
+import org.bukkit.util.RayTraceResult;
 
 /**
  * 兵士ボットの生成・破棄と、毎回の行動の決定。
  *
  * <p>行動の決め方（{@link #TICK_PERIOD} tick ごと）:
  * <ol>
- *   <li>方針と侵攻度から「持ち場」を引く（{@link #anchorFor}）。</li>
+ *   <li>方針から「持ち場」を引く（追従なら相手の足元、地点を守るならその地点。{@link #anchorFor}）。</li>
  *   <li>持ち場の周りにいる敵のうち、見えている最も近い敵を狙う（{@link #pickTarget}）。</li>
  *   <li>敵がいなければ持ち場へ歩く。</li>
  * </ol>
@@ -56,16 +59,11 @@ public final class BotManager {
     private final SiegeBotPlugin plugin;
     private final NPCRegistry registry;
     private final Map<String, SoldierBot> bots = new LinkedHashMap<>();
-    private final Map<Side, Order> defaultOrders = new EnumMap<>(Side.class);
-    private final Map<Side, Boolean> humansPresent = new EnumMap<>(Side.class);
     private long tickCount;
 
     public BotManager(SiegeBotPlugin plugin) {
         this.plugin = plugin;
         this.registry = CitizensAPI.createInMemoryNPCRegistry("siegebot");
-        for (Side s : Side.values()) {
-            defaultOrders.put(s, Order.front());
-        }
     }
 
     // ---- 一覧 ----
@@ -105,17 +103,22 @@ public final class BotManager {
     // ---- 生成・破棄 ----
 
     /**
-     * ボットを作って出す。
+     * 持ち主のいないボット（管理者のボット）を作って出す。出した地点を守る。
      *
      * @param fallback リスポーン地点が未設定のときに出す場所（null 可）
      * @return 作ったボット。同名がいる・出す場所がない場合は null
      */
     public SoldierBot spawn(String name, Side side, Location fallback) {
-        return spawn(name, side, fallback, null);
+        return spawn(name, side, fallback, null, null);
     }
 
-    /** 持ち主つきで出す（owner が null なら管理者のボット）。 */
-    public SoldierBot spawn(String name, Side side, Location fallback, UUID owner) {
+    /**
+     * ボットを作って出す。持ち主がいれば持ち主に追従し、いなければ出した地点を守る（どちらも持ち場優先）。
+     *
+     * @param owner     持ち主の UUID（管理者のボットは null）
+     * @param ownerName 持ち主の名前（管理者のボットは null）
+     */
+    public SoldierBot spawn(String name, Side side, Location fallback, UUID owner, String ownerName) {
         if (get(name) != null) {
             return null;
         }
@@ -139,7 +142,9 @@ public final class BotManager {
         }
         applyNavigatorSettings(npc);
         SoldierBot bot = new SoldierBot(name, side, npc, owner);
-        bot.order = defaultOrders.get(side);
+        bot.order = owner != null && ownerName != null
+                ? Order.follow(ownerName, Order.Stance.GUARD)
+                : Order.hold(Point.of(at), Order.Stance.GUARD);
         bots.put(name.toLowerCase(Locale.ROOT), bot);
         npc.spawn(at, SpawnReason.PLUGIN);
         return bot;
@@ -207,7 +212,7 @@ public final class BotManager {
                 mine = null;
             }
             if (mine == null && side != null) {
-                SoldierBot b = spawn(personalName(p.getName()), side, p.getLocation(), p.getUniqueId());
+                SoldierBot b = spawn(personalName(p.getName()), side, p.getLocation(), p.getUniqueId(), p.getName());
                 if (b != null) {
                     say(b, p.getName() + " の兵として参戦する");
                 }
@@ -267,45 +272,27 @@ public final class BotManager {
 
     // ---- 方針 ----
 
-    public Order defaultOrder(Side side) {
-        return defaultOrders.get(side);
-    }
-
-    /** 初期指示を差し替え、初期指示で動いているボットにも反映する。 */
-    public void setDefaultOrder(Side side, Order order) {
-        defaultOrders.put(side, order);
-        for (SoldierBot b : of(side)) {
-            if (b.usingDefault) {
-                b.order = order;
-            }
-        }
-    }
-
-    /** 味方の指示による方針の変更。 */
     public void setOrder(SoldierBot bot, Order order) {
         bot.order = order;
-        bot.usingDefault = false;
     }
 
-    public void resetToDefault(Side side) {
-        for (SoldierBot b : of(side)) {
-            b.order = defaultOrders.get(side);
-            b.usingDefault = true;
-        }
-    }
-
-    void onStageChanged(int stage) {
-        if (!plugin.settings().announceStage) {
+    /**
+     * 指示を反映して、最初のボットに復唱させる。全員が同じ方針なら 1 つにまとめ、違うなら 1 体ずつ並べる。
+     */
+    public void applyOrders(Map<SoldierBot, Order> orders) {
+        if (orders.isEmpty()) {
             return;
         }
-        for (Side side : Side.values()) {
-            List<SoldierBot> mine = of(side);
-            if (mine.isEmpty()) {
-                continue;
-            }
-            String place = plugin.data().stagePlace(stage, side);
-            say(mine.get(0), place == null ? "門が動いた。前線を移す" : "門が動いた。前線を「" + place + "」に移す");
+        Set<Order> distinct = new LinkedHashSet<>();
+        List<String> parts = new ArrayList<>();
+        for (Map.Entry<SoldierBot, Order> e : orders.entrySet()) {
+            setOrder(e.getKey(), e.getValue());
+            distinct.add(e.getValue());
+            parts.add(e.getKey().name + "：" + e.getValue().describe());
         }
+        SoldierBot voice = orders.keySet().iterator().next();
+        say(voice, distinct.size() == 1 ? "了解。" + distinct.iterator().next().describe()
+                : "了解。" + String.join(" / ", parts));
     }
 
     // ---- 陣営の判定 ----
@@ -357,46 +344,63 @@ public final class BotManager {
 
     // ---- 場所 ----
 
-    private Location placeLocation(String name) {
-        SiegeData.Place p = plugin.data().place(name);
+    /** 陣営のリスポーン地点。未設定なら null。 */
+    public Location spawnLocation(Side side) {
+        Point p = plugin.data().spawns().get(side);
         return p == null ? null : p.toLocation();
     }
 
-    public Location spawnLocation(Side side) {
-        Location l = placeLocation(plugin.data().spawns().get(side));
-        return l != null ? l : frontAnchor(side);
+    /** 倒されたボットを出し直す場所: リスポーン地点、なければ持ち主の横、なければ最後にいた所。 */
+    private Location respawnLocation(SoldierBot bot) {
+        Location l = spawnLocation(bot.side);
+        if (l != null) {
+            return l;
+        }
+        Player owner = bot.owner == null ? null : Bukkit.getPlayer(bot.owner);
+        if (owner != null && !owner.isDead()) {
+            return owner.getLocation();
+        }
+        return bot.npc.getStoredLocation();
     }
 
-    /** 現在の侵攻度での前線の位置。未設定なら null。 */
-    public Location frontAnchor(Side side) {
-        return placeLocation(plugin.data().stagePlace(plugin.gates().stage(), side));
-    }
-
-    /** 方針から、今いるべき「持ち場」を出す。決められなければ null（その場で戦う）。 */
+    /**
+     * 方針から、今いるべき「持ち場」を出す。決められなければ null（その場で近くの敵と戦う）。
+     * 追従の相手がいない・敵の陣営に移ったときも null。
+     */
     public Location anchorFor(SoldierBot bot) {
         Order o = bot.order;
-        switch (o.mode()) {
-            case FOLLOW -> {
-                // 敵の陣営でなければ追う（チームに入っていないプレイヤーも追える）
-                Player p = Bukkit.getPlayerExact(o.player());
-                if (p != null && !p.isDead() && sideOf(p) != bot.side.opposite()) {
-                    return groundBelow(p.getLocation());
-                }
-            }
-            case HOLD -> {
-                Location l = placeLocation(o.place());
-                if (l != null) {
-                    return groundBelow(l); // 「ここを守れ」を空中で使ったときに備える
-                }
-            }
-            case FRONT -> {
-            }
+        if (o == null) {
+            return null;
         }
-        return frontAnchor(bot.side);
+        if (o.mode() == Order.Mode.FOLLOW) {
+            // 敵の陣営でなければ追う（チームに入っていないプレイヤーも追える）
+            Player p = Bukkit.getPlayerExact(o.player());
+            if (p != null && !p.isDead() && sideOf(p) != bot.side.opposite()) {
+                return groundBelow(p.getLocation());
+            }
+            return null;
+        }
+        Location l = o.point().toLocation();
+        return l == null ? null : groundBelow(l);
+    }
+
+    /**
+     * プレイヤーが見ているブロックの、見ている面の側の 1 マス（床を見ていれば床の上、壁を見ていれば壁の手前）を、
+     * 足場の上に直したもの。空や hold-max-distance より遠い所を見ていれば null。
+     */
+    public Point lookPoint(Player p) {
+        RayTraceResult r = p.rayTraceBlocks(plugin.settings().holdMaxDistance, FluidCollisionMode.NEVER);
+        if (r == null || r.getHitBlock() == null) {
+            return null;
+        }
+        Block hit = r.getHitBlock();
+        BlockFace face = r.getHitBlockFace();
+        Block stand = hit.getRelative(face == null ? BlockFace.UP : face);
+        return Point.of(groundBelow(stand.getLocation().add(0.5, 0, 0.5)));
     }
 
     /** 空中（ジャンプ中・飛行中）の位置なら、真下の足場の上に直す。経路探索は空中の地点に向かえないため。 */
-    private static Location groundBelow(Location loc) {
+    static Location groundBelow(Location loc) {
         Block b = loc.getBlock();
         int minY = loc.getWorld().getMinHeight();
         for (int i = 0; i < 32 && b.getY() > minY; i++) {
@@ -414,7 +418,6 @@ public final class BotManager {
         tickCount++;
         if (tickCount % 4 == 0) {
             syncPersonalBots();
-            watchHumans();
         }
         long now = Bukkit.getCurrentTick();
         for (SoldierBot bot : bots.values()) {
@@ -422,17 +425,6 @@ public final class BotManager {
                 tickBot(bot, now);
             } catch (RuntimeException e) {
                 plugin.getLogger().warning("ボット " + bot.name + " の処理で例外: " + e);
-            }
-        }
-    }
-
-    /** 陣営から人間がいなくなったら、その陣営のボットを初期指示に戻す。 */
-    private void watchHumans() {
-        for (Side side : Side.values()) {
-            boolean present = !humans(side).isEmpty();
-            Boolean before = humansPresent.put(side, present);
-            if (Boolean.TRUE.equals(before) && !present) {
-                resetToDefault(side);
             }
         }
     }
@@ -445,10 +437,7 @@ public final class BotManager {
                 bot.respawnAtTick = now + plugin.settings().respawnSeconds * 20L;
             }
             if (now >= bot.respawnAtTick) {
-                Location at = spawnLocation(bot.side);
-                if (at == null) {
-                    at = npc.getStoredLocation();
-                }
+                Location at = respawnLocation(bot);
                 if (at != null && npc.spawn(at, SpawnReason.RESPAWN)) {
                     bot.respawnAtTick = 0;
                 }
@@ -481,9 +470,10 @@ public final class BotManager {
         if (anchor == null) {
             return;
         }
-        double arrive = bot.order.mode() == Order.Mode.FOLLOW ? s.followDistance : s.arriveRadius;
+        boolean following = bot.order.mode() == Order.Mode.FOLLOW;
+        double arrive = following ? s.followDistance : s.arriveRadius;
         if (self.getLocation().distanceSquared(anchor) <= arrive * arrive) {
-            if (nav.isNavigating() && bot.order.mode() == Order.Mode.FOLLOW) {
+            if (nav.isNavigating() && following) {
                 nav.cancelNavigation();
             }
             return;
@@ -503,7 +493,7 @@ public final class BotManager {
      */
     private LivingEntity pickTarget(SoldierBot bot, LivingEntity self, Location anchor, long now) {
         Settings s = plugin.settings();
-        double leash = bot.order.stance() == Order.Stance.PUSH ? s.pushLeash : s.guardLeash;
+        double leash = bot.order != null && bot.order.stance() == Order.Stance.PUSH ? s.pushLeash : s.guardLeash;
         boolean currentValid = bot.target != null && validTarget(bot, self, bot.target, anchor, leash);
         if (currentValid && now - bot.lastRetargetTick < s.retargetTicks) {
             return bot.target;

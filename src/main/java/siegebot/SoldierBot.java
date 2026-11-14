@@ -13,9 +13,8 @@ public final class SoldierBot {
     /** 持ち主のプレイヤー（専用のボット）。管理者が出したボットは null。 */
     final UUID owner;
 
-    Order order = Order.front();
-    /** true の間は「初期指示」で動いている（味方の指示を受けると false）。 */
-    boolean usingDefault = true;
+    /** 今の方針。出すときに {@link BotManager} が決める（持ち主への追従か、出した地点を守る）。 */
+    Order order;
     /** 次にリスポーンする時刻（サーバーの tick）。0 は未予約。 */
     long respawnAtTick;
     LivingEntity target;

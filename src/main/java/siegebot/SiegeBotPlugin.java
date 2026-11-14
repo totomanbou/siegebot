@@ -12,21 +12,16 @@ public final class SiegeBotPlugin extends JavaPlugin {
 
     private Settings settings;
     private SiegeData data;
-    private GateWatcher gates;
     private BotManager bots;
-    private OrderService orders;
-    private BukkitTask gateTask;
     private BukkitTask botTask;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
         settings = new Settings(getConfig());
-        data = new SiegeData(new File(getDataFolder(), "data.yml"));
+        data = new SiegeData(new File(getDataFolder(), "data.yml"), getLogger());
         data.load();
-        gates = new GateWatcher(this);
         bots = new BotManager(this);
-        orders = new OrderService(this);
 
         Bukkit.getPluginManager().registerEvents(new GameListener(this), this);
         PluginCommand cmd = getCommand("siegebot");
@@ -35,7 +30,6 @@ public final class SiegeBotPlugin extends JavaPlugin {
             cmd.setExecutor(executor);
             cmd.setTabCompleter(executor);
         }
-
         PluginCommand sbc = getCommand("sbc");
         if (sbc != null) {
             PlayerCommand pc = new PlayerCommand(this);
@@ -45,16 +39,12 @@ public final class SiegeBotPlugin extends JavaPlugin {
         }
 
         startTasks();
-        orders.configure();
         // ワールドと Citizens の準備が終わってから、保存してあるボットを出す
         Bukkit.getScheduler().runTaskLater(this, this::spawnSavedBots, 40L);
     }
 
     @Override
     public void onDisable() {
-        if (orders != null) {
-            orders.shutdown();
-        }
         if (bots != null) {
             bots.removeAll();
         }
@@ -67,26 +57,22 @@ public final class SiegeBotPlugin extends JavaPlugin {
         data.load();
         startTasks();
         bots.reapplySettings();
-        orders.configure();
         spawnSavedBots();
     }
 
     private void startTasks() {
-        if (gateTask != null) {
-            gateTask.cancel();
-        }
         if (botTask != null) {
             botTask.cancel();
         }
-        gateTask = Bukkit.getScheduler().runTaskTimer(this, () -> gates.check(), 20L, settings.gatePeriodTicks);
         botTask = Bukkit.getScheduler().runTaskTimer(this, () -> bots.tick(), 40L, BotManager.TICK_PERIOD);
     }
 
+    /** /sb spawn で出したボット（持ち主なし）を、陣営のリスポーン地点に出す。 */
     private void spawnSavedBots() {
         for (Map.Entry<String, Side> e : data.bots().entrySet()) {
             if (bots.get(e.getKey()) == null && bots.spawn(e.getKey(), e.getValue(), null) == null) {
-                getLogger().warning("ボット " + e.getKey() + " を出せません（"
-                        + e.getValue().label() + "のリスポーン地点か前線の場所を設定してください）");
+                getLogger().warning("ボット " + e.getKey() + " を出せません（/sb spawnpoint "
+                        + e.getValue().key() + " でリスポーン地点を設定してください）");
             }
         }
     }
@@ -99,15 +85,7 @@ public final class SiegeBotPlugin extends JavaPlugin {
         return data;
     }
 
-    public GateWatcher gates() {
-        return gates;
-    }
-
     public BotManager bots() {
         return bots;
-    }
-
-    public OrderService orders() {
-        return orders;
     }
 }

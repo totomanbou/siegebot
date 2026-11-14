@@ -16,15 +16,13 @@ DOCS = Path(sys.argv[1])
 OUT = ROOT / "SiegeBot-本サーバー用.zip"
 
 PLUGINS = {
-    "plugins/SiegeBot-0.1.0.jar": ROOT / "target" / "SiegeBot-0.1.0.jar",
+    "plugins/SiegeBot-0.2.0.jar": ROOT / "target" / "SiegeBot-0.2.0.jar",
     "plugins/Citizens.jar": ROOT / "testserver" / "plugins" / "Citizens.jar",
     "plugins/ItemJoin.jar": ROOT / "testserver" / "plugins" / "ItemJoin.jar",
     "plugins/ItemJoin/items.yml": ROOT / "itemjoin" / "items.yml",
 }
 # source/SiegeBot-src.zip に入れるもの（ビルドに要る分だけ。試験サーバー・道具・成果物は入れない）
-# bench の 2 つの JSON はキーワード判定のテスト（KeywordParserTest）が読む例の集合
-SOURCE_FILES = ["pom.xml", "build.cmd", ".gitattributes", "README.md",
-                "bench/cases.json", "bench/cases_holdout.json"]
+SOURCE_FILES = ["pom.xml", "build.cmd", ".gitattributes", "README.md", "LICENSE"]
 SOURCE_DIRS = ["src", "itemjoin"]
 
 

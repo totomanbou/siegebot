@@ -10,7 +10,6 @@ import java.util.UUID;
 import java.util.function.Function;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
-import org.bukkit.Location;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabExecutor;
@@ -21,25 +20,21 @@ import org.bukkit.entity.Player;
  * ItemJoin の指揮棒の右クリックで /sbc menu を呼び、{@link CommandMenu} の画面から指示する想定。
  *
  * <ul>
- *   <li>/sbc menu          … 指揮メニューを開く</li>
- *   <li>/sbc follow        … 自分についてこさせる</li>
- *   <li>/sbc front         … 前線へ</li>
- *   <li>/sbc here          … 今立っている場所を守らせる</li>
- *   <li>/sbc hold &lt;場所&gt; … 登録した場所を守らせる</li>
- *   <li>/sbc retreat       … リスポーン地点まで下がらせる</li>
- *   <li>/sbc stance        … 構え（積極的 ⇔ 持ち場優先）を切り替える</li>
- *   <li>/sbc target        … 指示する相手を切り替える（全員 → 1 体ずつ → 全員）</li>
- *   <li>/sbc status        … ボットの方針の一覧</li>
+ *   <li>/sbc menu                 … 指揮メニューを開く</li>
+ *   <li>/sbc follow               … 自分についてこさせる</li>
+ *   <li>/sbc hold                 … 自分の視点の先（見ているブロックの所）を守らせる</li>
+ *   <li>/sbc stance [push|guard]  … 構えを変える（引数なしなら切り替え）。動きはそのまま</li>
+ *   <li>/sbc target               … 指示する相手を切り替える（専用のボットが無効のときだけ）</li>
+ *   <li>/sbc status               … ボットの方針の一覧</li>
  * </ul>
  */
 public final class PlayerCommand implements TabExecutor {
 
-    private static final List<String> SUBS = List.of(
-            "menu", "follow", "front", "here", "hold", "retreat", "stance", "target", "status");
+    private static final List<String> SUBS = List.of("menu", "follow", "hold", "stance", "target", "status");
 
     private final SiegeBotPlugin plugin;
     private final CommandMenu menu;
-    /** プレイヤー → 指示する相手のボット名（無ければ全員）。 */
+    /** プレイヤー → 指示する相手のボット名（無ければ全員）。専用のボットが無効のときだけ使う。 */
     private final Map<UUID, String> selected = new HashMap<>();
 
     public PlayerCommand(SiegeBotPlugin plugin) {
@@ -72,17 +67,16 @@ public final class PlayerCommand implements TabExecutor {
         switch (sub) {
             case "menu" -> menu.open(p, side);
             case "follow" -> follow(p, side);
-            case "front" -> front(p, side);
-            case "here" -> here(p, side);
-            case "hold" -> {
-                if (args.length < 2) {
-                    tell(p, "使い方: /sbc hold <場所>", NamedTextColor.YELLOW);
+            case "hold" -> holdLookPoint(p, side);
+            case "stance" -> {
+                if (args.length >= 2 && args[1].equalsIgnoreCase("push")) {
+                    setStance(p, side, Order.Stance.PUSH);
+                } else if (args.length >= 2 && args[1].equalsIgnoreCase("guard")) {
+                    setStance(p, side, Order.Stance.GUARD);
                 } else {
-                    holdPlace(p, side, String.join(" ", List.of(args).subList(1, args.length)));
+                    toggleStance(p, side);
                 }
             }
-            case "retreat" -> retreat(p, side);
-            case "stance" -> toggleStance(p, side);
             case "target" -> cycleTarget(p, side);
             case "status" -> status(p, side);
             default -> tell(p, "使い方: /sbc <" + String.join("|", SUBS) + ">", NamedTextColor.YELLOW);
@@ -91,6 +85,17 @@ public final class PlayerCommand implements TabExecutor {
     }
 
     // ---- 指示する相手 ----
+
+    /** 専用のボットが有効か（そのときは自分のボットにだけ指示できる）。 */
+    boolean personal() {
+        return plugin.settings().personalBots;
+    }
+
+    /** 自分の専用のボット。なければ null。 */
+    SoldierBot ownBot(Player p, Side side) {
+        SoldierBot b = plugin.bots().ownedBy(p.getUniqueId());
+        return b != null && b.side() == side ? b : null;
+    }
 
     /** 選んでいる相手のボット名。全員なら null（選んだボットが消えていたら全員に戻す）。 */
     String selectedName(Player p, Side side) {
@@ -112,17 +117,6 @@ public final class PlayerCommand implements TabExecutor {
         }
     }
 
-    /** 専用のボットが有効か（そのときは自分のボットにだけ指示できる）。 */
-    boolean personal() {
-        return plugin.settings().personalBots;
-    }
-
-    /** 自分の専用のボット。なければ null。 */
-    SoldierBot ownBot(Player p, Side side) {
-        SoldierBot b = plugin.bots().ownedBy(p.getUniqueId());
-        return b != null && b.side() == side ? b : null;
-    }
-
     /** 指示が効くボット。専用のボットが有効なら自分のボットだけ、そうでなければ選んだ相手（全員か 1 体）。 */
     List<SoldierBot> targets(Player p, Side side) {
         if (personal()) {
@@ -135,42 +129,25 @@ public final class PlayerCommand implements TabExecutor {
 
     // ---- 指示 ----
 
+    /** 自分についてこさせる。構えは今のまま。 */
     void follow(Player p, Side side) {
-        apply(p, side, b -> new Order(Order.Mode.FOLLOW, null, p.getName(), Order.Stance.GUARD));
+        apply(p, side, b -> Order.follow(p.getName(), b.order().stance()));
     }
 
-    void front(Player p, Side side) {
-        apply(p, side, b -> new Order(Order.Mode.FRONT, null, null, Order.Stance.PUSH));
-    }
-
-    void here(Player p, Side side) {
-        String name = p.getName() + "の地点";
-        Location at = p.getLocation();
-        plugin.data().putTemporaryPlace(name, at);
-        apply(p, side, b -> new Order(Order.Mode.HOLD, name, null, Order.Stance.GUARD));
-    }
-
-    void holdPlace(Player p, Side side, String placeName) {
-        SiegeData.Place pl = plugin.data().place(placeName);
-        if (pl == null) {
-            tell(p, "場所「" + placeName + "」は登録されていません。", NamedTextColor.RED);
+    /** 視点の先（見ているブロックの、見ている面の手前）を守らせる。構えは今のまま。 */
+    void holdLookPoint(Player p, Side side) {
+        Point point = plugin.bots().lookPoint(p);
+        if (point == null) {
+            tell(p, "視点の先にブロックがありません（" + Math.round(plugin.settings().holdMaxDistance)
+                    + " ブロック以内の地面や壁を見てください）。", NamedTextColor.RED);
             return;
         }
-        apply(p, side, b -> new Order(Order.Mode.HOLD, pl.name(), null, Order.Stance.GUARD));
+        apply(p, side, b -> Order.hold(point, b.order().stance()));
     }
 
-    void retreat(Player p, Side side) {
-        SiegeData.Place spawn = plugin.data().place(plugin.data().spawns().get(side));
-        if (spawn == null) {
-            tell(p, side.label() + "のリスポーン地点が設定されていません。", NamedTextColor.RED);
-            return;
-        }
-        apply(p, side, b -> new Order(Order.Mode.HOLD, spawn.name(), null, Order.Stance.GUARD));
-    }
-
-    /** 構えだけを変える。動き（前線・場所・追従）はそのまま。 */
+    /** 構えだけを変える。動き（追従・地点を守る）はそのまま。 */
     void setStance(Player p, Side side, Order.Stance stance) {
-        apply(p, side, b -> new Order(b.order().mode(), b.order().place(), b.order().player(), stance));
+        apply(p, side, b -> b.order().withStance(stance));
     }
 
     private void toggleStance(Player p, Side side) {
@@ -182,11 +159,11 @@ public final class PlayerCommand implements TabExecutor {
     }
 
     private void apply(Player p, Side side, Function<SoldierBot, Order> make) {
-        Map<String, Order> orders = new LinkedHashMap<>();
+        Map<SoldierBot, Order> orders = new LinkedHashMap<>();
         for (SoldierBot b : targets(p, side)) {
-            orders.put(b.name(), make.apply(b));
+            orders.put(b, make.apply(b));
         }
-        plugin.orders().applyDirect(side, orders);
+        plugin.bots().applyOrders(orders);
     }
 
     private void cycleTarget(Player p, Side side) {
@@ -226,19 +203,13 @@ public final class PlayerCommand implements TabExecutor {
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String label, String[] args) {
+        List<String> candidates = args.length == 1 ? SUBS
+                : args.length == 2 && args[0].equalsIgnoreCase("stance") ? List.of("push", "guard") : List.of();
         List<String> r = new ArrayList<>();
-        if (args.length == 1) {
-            String t = args[0].toLowerCase(Locale.ROOT);
-            for (String s : SUBS) {
-                if (s.startsWith(t)) {
-                    r.add(s);
-                }
-            }
-        } else if (args.length == 2 && args[0].equalsIgnoreCase("hold")) {
-            for (String name : plugin.data().places().keySet()) {
-                if (name.toLowerCase(Locale.ROOT).startsWith(args[1].toLowerCase(Locale.ROOT))) {
-                    r.add(name);
-                }
+        String t = args.length == 0 ? "" : args[args.length - 1].toLowerCase(Locale.ROOT);
+        for (String s : candidates) {
+            if (s.startsWith(t)) {
+                r.add(s);
             }
         }
         return r;

@@ -13,21 +13,10 @@ public final class Settings {
     public final String attackTeam;
     public final String defendTeam;
 
-    public final String apiKey;
-    public final String model;
-    public final int llmTimeoutSeconds;
-
-    public final boolean listenPublicChat;
-    public final boolean listenTeamMsg;
-    public final String chatPrefix;
-    /** 指示の理解のしかた: auto / keyword / llm。 */
-    public final String parserMode;
-
     /** プレイヤー 1 人に 1 体の専用のボットを出し、指示は自分のボットにだけ効くようにする。 */
     public final boolean personalBots;
-
-    public final String defaultAttackOrder;
-    public final String defaultDefendOrder;
+    /** 「視点の先を守れ」で狙える最大の距離（ブロック）。 */
+    public final double holdMaxDistance;
 
     public final double engageRadius;
     public final double pushLeash;
@@ -43,10 +32,6 @@ public final class Settings {
     public final int attackDelayTicks;
     public final String pathfinder;
 
-    public final int gatePeriodTicks;
-    public final double openAirRatio;
-    public final boolean announceStage;
-
     /** 装備の部位（hand, off_hand, helmet, chestplate, leggings, boots）→ アイテム。 */
     public final Map<String, Material> equipment = new LinkedHashMap<>();
 
@@ -54,24 +39,8 @@ public final class Settings {
         attackTeam = c.getString("teams.attack", "attack");
         defendTeam = c.getString("teams.defend", "defend");
 
-        String key = c.getString("llm.api-key", "");
-        if (key == null || key.isBlank()) {
-            key = System.getenv("ANTHROPIC_API_KEY");
-        }
-        apiKey = key == null ? "" : key.trim();
-        model = c.getString("llm.model", "claude-haiku-5-5");
-        llmTimeoutSeconds = Math.max(5, c.getInt("llm.timeout-seconds", 20));
-
-        listenPublicChat = c.getBoolean("chat.listen-public-chat", true);
-        listenTeamMsg = c.getBoolean("chat.listen-teammsg", true);
-        chatPrefix = c.getString("chat.prefix", "");
-        String mode = String.valueOf(c.getString("chat.parser", "auto")).trim().toLowerCase(Locale.ROOT);
-        parserMode = mode.equals("keyword") || mode.equals("llm") ? mode : "auto";
-
         personalBots = c.getBoolean("personal-bots.enabled", true);
-
-        defaultAttackOrder = c.getString("default-orders.attack", "");
-        defaultDefendOrder = c.getString("default-orders.defend", "");
+        holdMaxDistance = Math.max(4, c.getDouble("orders.hold-max-distance", 48));
 
         engageRadius = c.getDouble("combat.engage-radius", 16);
         pushLeash = c.getDouble("combat.push-leash", 24);
@@ -81,15 +50,11 @@ public final class Settings {
         respawnSeconds = Math.max(0, c.getInt("combat.respawn-seconds", 10));
         pathRange = (float) c.getDouble("combat.path-range", 96);
         speed = (float) c.getDouble("combat.speed", 1.95);
-        retargetTicks = Math.max(BotManager.TICK_PERIOD, (int) Math.round(c.getDouble("combat.retarget-seconds", 2.0) * 20));
+        retargetTicks = Math.max(BotManager.TICK_PERIOD,
+                (int) Math.round(c.getDouble("combat.retarget-seconds", 2.0) * 20));
         attackRange = c.getDouble("combat.attack-range", 3.0);
         attackDelayTicks = Math.max(1, c.getInt("combat.attack-delay-ticks", 12));
         pathfinder = c.getString("combat.pathfinder", "CITIZENS").toUpperCase(Locale.ROOT);
-
-        gatePeriodTicks = Math.max(1, c.getInt("gates.check-period-ticks", 20));
-        double ratio = c.getDouble("gates.open-air-ratio", 0.9);
-        openAirRatio = (ratio > 0 && ratio <= 1) ? ratio : 0.9;
-        announceStage = c.getBoolean("gates.announce", true);
 
         ConfigurationSection eq = c.getConfigurationSection("equipment");
         if (eq != null) {
@@ -104,13 +69,5 @@ public final class Settings {
 
     public String teamName(Side side) {
         return side == Side.ATTACK ? attackTeam : defendTeam;
-    }
-
-    public String defaultOrderText(Side side) {
-        return side == Side.ATTACK ? defaultAttackOrder : defaultDefendOrder;
-    }
-
-    public boolean llmEnabled() {
-        return !apiKey.isEmpty();
     }
 }
