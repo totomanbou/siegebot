@@ -362,16 +362,7 @@ public final class BotManager {
 
     /** プレイヤーのスコアボードのチームから陣営を出す。どちらでもなければ null。 */
     public Side sideOf(Player p) {
-        Team t = Bukkit.getScoreboardManager().getMainScoreboard().getEntryTeam(p.getName());
-        if (t == null) {
-            return null;
-        }
-        for (Side s : Side.values()) {
-            if (t.getName().equalsIgnoreCase(plugin.settings().teamName(s))) {
-                return s;
-            }
-        }
-        return null;
+        return sideOfTeam(Bukkit.getScoreboardManager().getMainScoreboard().getEntryTeam(p.getName()));
     }
 
     /** エンティティ（プレイヤーかボット）の陣営。どちらでもなければ null。 */
@@ -388,6 +379,10 @@ public final class BotManager {
         return sideOfTeam(t);
     }
 
+    /**
+     * スコアボードのチームが、どちらの陣営のチームか（config.yml の teams と、大文字・小文字を区別せずに比べる）。
+     * 陣営の判定はすべてここを通す。
+     */
     private Side sideOfTeam(Team t) {
         if (t == null) {
             return null;
@@ -400,10 +395,20 @@ public final class BotManager {
         return null;
     }
 
+    /** その陣営のスコアボードのチーム（名前は大文字・小文字を区別しない）。なければ null。 */
+    private Team teamOf(Side side) {
+        for (Team t : Bukkit.getScoreboardManager().getMainScoreboard().getTeams()) {
+            if (sideOfTeam(t) == side) {
+                return t;
+            }
+        }
+        return null;
+    }
+
     /** その陣営のチームに入っているモブ（プレイヤーとボットと防具立てを除く、生きている読み込み済みのもの）。 */
     private List<LivingEntity> mobs(Side side) {
         List<LivingEntity> r = new ArrayList<>();
-        Team t = Bukkit.getScoreboardManager().getMainScoreboard().getTeam(plugin.settings().teamName(side));
+        Team t = teamOf(side);
         if (t == null) {
             return r;
         }

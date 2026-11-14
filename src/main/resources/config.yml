@@ -3,8 +3,8 @@
 
 # 攻め・守りに対応するスコアボードのチーム名（/team で作ったチームの名前）
 teams:
-  attack: "attack"
-  defend: "defend"
+  attack: "Attack"
+  defend: "Defence"
 
 # ボットは自動では出ない・復活しない。コマンドブロックの /sb revive <@p|@a|プレイヤー|bots|all> で出し、蘇生する。
 # 出す場所は陣営のリスポーン地点（/sb spawnpoint）、未設定なら持ち主の横。持ち主が倒れるとボットも倒れる。

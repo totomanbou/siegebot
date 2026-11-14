@@ -41,8 +41,8 @@ public final class Settings {
     public final Map<String, Material> equipment = new LinkedHashMap<>();
 
     public Settings(FileConfiguration c) {
-        attackTeam = c.getString("teams.attack", "attack");
-        defendTeam = c.getString("teams.defend", "defend");
+        attackTeam = c.getString("teams.attack", "Attack");
+        defendTeam = c.getString("teams.defend", "Defence");
 
         personalBots = c.getBoolean("personal-bots.enabled", true);
         holdMaxDistance = Math.max(4, c.getDouble("orders.hold-max-distance", 48));
