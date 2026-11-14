@@ -28,6 +28,10 @@ public final class Settings {
     public final float speed;
     /** 狙いを選び直す間隔（tick）。 */
     public final int retargetTicks;
+    /** 火力: ボットが与えるダメージの倍率（1.0 でそのまま）。 */
+    public final double damageMultiplier;
+    /** 防御力: ボットが受けるダメージをこの値で割る（1.0 でそのまま。0 以下にはしない）。 */
+    public final double defenseMultiplier;
     public final double attackRange;
     public final int attackDelayTicks;
     public final String pathfinder;
@@ -49,7 +53,9 @@ public final class Settings {
         arriveRadius = c.getDouble("combat.arrive-radius", 3);
         respawnSeconds = Math.max(0, c.getInt("combat.respawn-seconds", 10));
         pathRange = (float) c.getDouble("combat.path-range", 96);
-        speed = (float) c.getDouble("combat.speed", 1.95);
+        speed = (float) c.getDouble("combat.speed", 1.5);
+        damageMultiplier = Math.max(0.0, c.getDouble("combat.damage-multiplier", 1.2));
+        defenseMultiplier = Math.max(0.1, c.getDouble("combat.defense-multiplier", 1.2));
         retargetTicks = Math.max(BotManager.TICK_PERIOD,
                 (int) Math.round(c.getDouble("combat.retarget-seconds", 2.0) * 20));
         attackRange = c.getDouble("combat.attack-range", 3.0);

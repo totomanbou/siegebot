@@ -38,6 +38,20 @@ public final class GameListener implements Listener {
         Side a = bots.sideOf(attacker);
         if (a != null && a == bots.sideOf(victim)) {
             event.setCancelled(true);
+            return;
+        }
+        // 火力: ボットが与えるダメージに damage-multiplier を掛ける
+        // 防御力: ボットが受けるダメージを defense-multiplier で割る（ボットどうしなら両方が効く）
+        Settings s = plugin.settings();
+        double damage = event.getDamage();
+        if (bots.byEntity(attacker) != null) {
+            damage *= s.damageMultiplier;
+        }
+        if (bots.byEntity(victim) != null) {
+            damage /= s.defenseMultiplier;
+        }
+        if (damage != event.getDamage()) {
+            event.setDamage(damage);
         }
     }
 }
