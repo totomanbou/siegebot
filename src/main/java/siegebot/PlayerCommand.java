@@ -23,6 +23,7 @@ import org.bukkit.entity.Player;
  *   <li>/sbc menu                 … 指揮メニューを開く</li>
  *   <li>/sbc follow               … 自分についてこさせる</li>
  *   <li>/sbc hold                 … 自分の視点の先（見ているブロックの所）を守らせる</li>
+ *   <li>/sbc call                 … 自分の所へ瞬間移動させる（方針はそのまま）</li>
  *   <li>/sbc stance [push|guard]  … 構えを変える（引数なしなら切り替え）。動きはそのまま</li>
  *   <li>/sbc target               … 指示する相手を切り替える（専用のボットが無効のときだけ）</li>
  *   <li>/sbc status               … ボットの方針の一覧</li>
@@ -30,12 +31,14 @@ import org.bukkit.entity.Player;
  */
 public final class PlayerCommand implements TabExecutor {
 
-    private static final List<String> SUBS = List.of("menu", "follow", "hold", "stance", "target", "status");
+    private static final List<String> SUBS = List.of("menu", "follow", "hold", "call", "stance", "target", "status");
 
     private final SiegeBotPlugin plugin;
     private final CommandMenu menu;
     /** プレイヤー → 指示する相手のボット名（無ければ全員）。専用のボットが無効のときだけ使う。 */
     private final Map<UUID, String> selected = new HashMap<>();
+    /** プレイヤー → 最後に呼び寄せた時刻（サーバーの tick）。 */
+    private final Map<UUID, Long> lastCall = new HashMap<>();
 
     public PlayerCommand(SiegeBotPlugin plugin) {
         this.plugin = plugin;
@@ -68,6 +71,7 @@ public final class PlayerCommand implements TabExecutor {
             case "menu" -> menu.open(p, side);
             case "follow" -> follow(p, side);
             case "hold" -> holdLookPoint(p, side);
+            case "call" -> callToMe(p, side);
             case "stance" -> {
                 if (args.length >= 2 && args[1].equalsIgnoreCase("push")) {
                     setStance(p, side, Order.Stance.PUSH);
@@ -135,6 +139,36 @@ public final class PlayerCommand implements TabExecutor {
     }
 
     /** 視点の先（見ているブロックの、見ている面の手前）を守らせる。構えは今のまま。 */
+    /**
+     * 自分の所（足元の地面）へ瞬間移動させる。方針はそのまま（「守れ」のままなら、守る地点へ歩いて戻る）。
+     * 倒れているボットは呼べない。orders.call-cooldown-seconds が 0 より大きければ、その間は続けて呼べない。
+     */
+    void callToMe(Player p, Side side) {
+        int cooldown = plugin.settings().callCooldownTicks;
+        long now = org.bukkit.Bukkit.getCurrentTick();
+        Long last = lastCall.get(p.getUniqueId());
+        if (cooldown > 0 && last != null && now - last < cooldown) {
+            long left = (cooldown - (now - last) + 19) / 20;
+            tell(p, "呼び寄せはあと " + left + " 秒使えません。", NamedTextColor.RED);
+            return;
+        }
+        org.bukkit.Location to = BotManager.groundBelow(p.getLocation());
+        int moved = 0;
+        for (SoldierBot b : targets(p, side)) {
+            if (!b.alive()) {
+                tell(p, b.name() + " は倒れているので呼べません（コマンドブロックで蘇生してください）。", NamedTextColor.RED);
+                continue;
+            }
+            b.npc.getNavigator().cancelNavigation();
+            b.npc.getEntity().teleport(to);
+            plugin.bots().say(b, "到着した");
+            moved++;
+        }
+        if (moved > 0) {
+            lastCall.put(p.getUniqueId(), now);
+        }
+    }
+
     void holdLookPoint(Player p, Side side) {
         Point point = plugin.bots().lookPoint(p);
         if (point == null) {

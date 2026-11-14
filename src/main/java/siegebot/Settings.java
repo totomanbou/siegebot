@@ -17,6 +17,8 @@ public final class Settings {
     public final boolean personalBots;
     /** 「視点の先を守れ」で狙える最大の距離（ブロック）。 */
     public final double holdMaxDistance;
+    /** 「呼び寄せる」を続けて使えない時間（tick）。0 なら制限なし。 */
+    public final int callCooldownTicks;
 
     public final double engageRadius;
     public final double pushLeash;
@@ -44,6 +46,7 @@ public final class Settings {
 
         personalBots = c.getBoolean("personal-bots.enabled", true);
         holdMaxDistance = Math.max(4, c.getDouble("orders.hold-max-distance", 48));
+        callCooldownTicks = (int) Math.round(Math.max(0, c.getDouble("orders.call-cooldown-seconds", 0)) * 20);
 
         engageRadius = c.getDouble("combat.engage-radius", 16);
         pushLeash = c.getDouble("combat.push-leash", 24);

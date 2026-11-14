@@ -18,6 +18,8 @@ personal-bots:
 orders:
   # 「視点の先を守れ」で狙える最大の距離（ブロック）
   hold-max-distance: 48
+  # 「呼び寄せる」（自分の所へ瞬間移動）を続けて使えない秒数。0 なら何度でも使える
+  call-cooldown-seconds: 0
 
 combat:
   # 敵に気づく距離（ブロック）
