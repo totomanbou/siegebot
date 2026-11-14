@@ -1,0 +1,23 @@
+name: SiegeBot
+version: '${project.version}'
+main: siegebot.SiegeBotPlugin
+api-version: '26.1'
+depend: [Citizens]
+description: Team chat driven AI soldiers for castle siege games.
+commands:
+  siegebot:
+    description: SiegeBot admin command
+    usage: /siegebot help
+    aliases: [sb]
+    permission: siegebot.admin
+  sbc:
+    description: Give orders to your team's bots (used by ItemJoin items)
+    usage: /sbc <menu|follow|front|here|hold|retreat|stance|target|status>
+    permission: siegebot.command
+permissions:
+  siegebot.command:
+    description: Allows giving orders to your own team's bots
+    default: true
+  siegebot.admin:
+    description: Allows managing siege bots
+    default: op

@@ -1,0 +1,26 @@
+# --{ SiegeBot 用の ItemJoin のアイテム（ItemJoin 6.1.8 で確認）}--
+# plugins/ItemJoin/items.yml をこのファイルで置き換えるか、items: の下の siegebot-baton を既存の items.yml に足してください。
+# 指揮棒を右クリックすると、SiegeBot の指揮メニュー（/sbc menu）が開きます。自分のチームのボットにだけ効きます。
+# 置き場所（slot）は 0〜8 がホットバーです。攻城戦の武器と重ならない番号に変えてください。
+
+# 書き換えると ItemJoin がこのファイルを作り直すので、変えないこと。
+items-Version: 8
+
+items-Delay: 2
+items-Overwrite: false
+items-Spamming: false
+items-RestrictCount: false
+
+items:
+  siegebot-baton:
+    id: BLAZE_ROD
+    slot: 8
+    name: '&e指揮棒'
+    lore:
+      - '&7右クリック: &f指揮メニューを開く'
+    interact-right:
+      - 'player: sbc menu'
+    commands-cooldown: 1
+    itemflags: inventory-modify, self-drops, death-drops, hide-flags
+    triggers: join, respawn, world-switch
+    enabled-worlds: ALL

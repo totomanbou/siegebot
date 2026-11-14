@@ -1,0 +1,246 @@
+package siegebot;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
+import java.util.function.Function;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import org.bukkit.Location;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandSender;
+import org.bukkit.command.TabExecutor;
+import org.bukkit.entity.Player;
+
+/**
+ * 一般のプレイヤー向けの指示コマンド /sbc。自分のチームのボットにだけ効く。
+ * ItemJoin の指揮棒の右クリックで /sbc menu を呼び、{@link CommandMenu} の画面から指示する想定。
+ *
+ * <ul>
+ *   <li>/sbc menu          … 指揮メニューを開く</li>
+ *   <li>/sbc follow        … 自分についてこさせる</li>
+ *   <li>/sbc front         … 前線へ</li>
+ *   <li>/sbc here          … 今立っている場所を守らせる</li>
+ *   <li>/sbc hold &lt;場所&gt; … 登録した場所を守らせる</li>
+ *   <li>/sbc retreat       … リスポーン地点まで下がらせる</li>
+ *   <li>/sbc stance        … 構え（積極的 ⇔ 持ち場優先）を切り替える</li>
+ *   <li>/sbc target        … 指示する相手を切り替える（全員 → 1 体ずつ → 全員）</li>
+ *   <li>/sbc status        … ボットの方針の一覧</li>
+ * </ul>
+ */
+public final class PlayerCommand implements TabExecutor {
+
+    private static final List<String> SUBS = List.of(
+            "menu", "follow", "front", "here", "hold", "retreat", "stance", "target", "status");
+
+    private final SiegeBotPlugin plugin;
+    private final CommandMenu menu;
+    /** プレイヤー → 指示する相手のボット名（無ければ全員）。 */
+    private final Map<UUID, String> selected = new HashMap<>();
+
+    public PlayerCommand(SiegeBotPlugin plugin) {
+        this.plugin = plugin;
+        this.menu = new CommandMenu(plugin, this);
+    }
+
+    /** 画面のクリックを受けるリスナー（プラグインの起動時に登録する）。 */
+    public CommandMenu menu() {
+        return menu;
+    }
+
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (!(sender instanceof Player p)) {
+            sender.sendMessage("[SiegeBot] このコマンドはゲーム内のプレイヤーだけが使えます。");
+            return true;
+        }
+        Side side = plugin.bots().sideOf(p);
+        if (side == null) {
+            tell(p, "攻め・守りのどちらのチームにも入っていません。", NamedTextColor.RED);
+            return true;
+        }
+        if (targets(p, side).isEmpty()) {
+            tell(p, personal() ? "あなたのボットはまだいません（チームに入って数秒で出ます）。"
+                    : side.label() + "のボットがいません。", NamedTextColor.RED);
+            return true;
+        }
+        String sub = args.length == 0 ? "menu" : args[0].toLowerCase(Locale.ROOT);
+        switch (sub) {
+            case "menu" -> menu.open(p, side);
+            case "follow" -> follow(p, side);
+            case "front" -> front(p, side);
+            case "here" -> here(p, side);
+            case "hold" -> {
+                if (args.length < 2) {
+                    tell(p, "使い方: /sbc hold <場所>", NamedTextColor.YELLOW);
+                } else {
+                    holdPlace(p, side, String.join(" ", List.of(args).subList(1, args.length)));
+                }
+            }
+            case "retreat" -> retreat(p, side);
+            case "stance" -> toggleStance(p, side);
+            case "target" -> cycleTarget(p, side);
+            case "status" -> status(p, side);
+            default -> tell(p, "使い方: /sbc <" + String.join("|", SUBS) + ">", NamedTextColor.YELLOW);
+        }
+        return true;
+    }
+
+    // ---- 指示する相手 ----
+
+    /** 選んでいる相手のボット名。全員なら null（選んだボットが消えていたら全員に戻す）。 */
+    String selectedName(Player p, Side side) {
+        String name = selected.get(p.getUniqueId());
+        SoldierBot b = name == null ? null : plugin.bots().get(name);
+        if (b != null && b.side() == side) {
+            return b.name();
+        }
+        selected.remove(p.getUniqueId());
+        return null;
+    }
+
+    /** 指示する相手を選ぶ（null で全員）。 */
+    void select(Player p, String botName) {
+        if (botName == null) {
+            selected.remove(p.getUniqueId());
+        } else {
+            selected.put(p.getUniqueId(), botName);
+        }
+    }
+
+    /** 専用のボットが有効か（そのときは自分のボットにだけ指示できる）。 */
+    boolean personal() {
+        return plugin.settings().personalBots;
+    }
+
+    /** 自分の専用のボット。なければ null。 */
+    SoldierBot ownBot(Player p, Side side) {
+        SoldierBot b = plugin.bots().ownedBy(p.getUniqueId());
+        return b != null && b.side() == side ? b : null;
+    }
+
+    /** 指示が効くボット。専用のボットが有効なら自分のボットだけ、そうでなければ選んだ相手（全員か 1 体）。 */
+    List<SoldierBot> targets(Player p, Side side) {
+        if (personal()) {
+            SoldierBot b = ownBot(p, side);
+            return b == null ? List.of() : List.of(b);
+        }
+        String name = selectedName(p, side);
+        return name == null ? plugin.bots().of(side) : List.of(plugin.bots().get(name));
+    }
+
+    // ---- 指示 ----
+
+    void follow(Player p, Side side) {
+        apply(p, side, b -> new Order(Order.Mode.FOLLOW, null, p.getName(), Order.Stance.GUARD));
+    }
+
+    void front(Player p, Side side) {
+        apply(p, side, b -> new Order(Order.Mode.FRONT, null, null, Order.Stance.PUSH));
+    }
+
+    void here(Player p, Side side) {
+        String name = p.getName() + "の地点";
+        Location at = p.getLocation();
+        plugin.data().putTemporaryPlace(name, at);
+        apply(p, side, b -> new Order(Order.Mode.HOLD, name, null, Order.Stance.GUARD));
+    }
+
+    void holdPlace(Player p, Side side, String placeName) {
+        SiegeData.Place pl = plugin.data().place(placeName);
+        if (pl == null) {
+            tell(p, "場所「" + placeName + "」は登録されていません。", NamedTextColor.RED);
+            return;
+        }
+        apply(p, side, b -> new Order(Order.Mode.HOLD, pl.name(), null, Order.Stance.GUARD));
+    }
+
+    void retreat(Player p, Side side) {
+        SiegeData.Place spawn = plugin.data().place(plugin.data().spawns().get(side));
+        if (spawn == null) {
+            tell(p, side.label() + "のリスポーン地点が設定されていません。", NamedTextColor.RED);
+            return;
+        }
+        apply(p, side, b -> new Order(Order.Mode.HOLD, spawn.name(), null, Order.Stance.GUARD));
+    }
+
+    /** 構えだけを変える。動き（前線・場所・追従）はそのまま。 */
+    void setStance(Player p, Side side, Order.Stance stance) {
+        apply(p, side, b -> new Order(b.order().mode(), b.order().place(), b.order().player(), stance));
+    }
+
+    private void toggleStance(Player p, Side side) {
+        boolean allPush = true;
+        for (SoldierBot b : targets(p, side)) {
+            allPush &= b.order().stance() == Order.Stance.PUSH;
+        }
+        setStance(p, side, allPush ? Order.Stance.GUARD : Order.Stance.PUSH);
+    }
+
+    private void apply(Player p, Side side, Function<SoldierBot, Order> make) {
+        Map<String, Order> orders = new LinkedHashMap<>();
+        for (SoldierBot b : targets(p, side)) {
+            orders.put(b.name(), make.apply(b));
+        }
+        plugin.orders().applyDirect(side, orders);
+    }
+
+    private void cycleTarget(Player p, Side side) {
+        if (personal()) {
+            tell(p, "指示できるのは自分のボットだけです。", NamedTextColor.YELLOW);
+            return;
+        }
+        List<SoldierBot> mine = plugin.bots().of(side);
+        String cur = selectedName(p, side);
+        int idx = -1;
+        for (int i = 0; i < mine.size(); i++) {
+            if (mine.get(i).name().equals(cur)) {
+                idx = i;
+            }
+        }
+        String next = idx + 1 < mine.size() ? mine.get(idx + 1).name() : null;
+        select(p, next);
+        Component msg = Component.text("指示する相手: ", NamedTextColor.GRAY)
+                .append(Component.text(next == null ? "全員" : next, NamedTextColor.AQUA));
+        p.sendActionBar(msg);
+        p.sendMessage(Component.text("[SiegeBot] ", NamedTextColor.GOLD).append(msg));
+    }
+
+    private void status(Player p, Side side) {
+        if (!personal()) {
+            String cur = selectedName(p, side);
+            tell(p, "指示する相手: " + (cur == null ? "全員" : cur), NamedTextColor.GRAY);
+        }
+        for (SoldierBot b : targets(p, side)) {
+            tell(p, b.name() + "：" + b.order().describe() + (b.alive() ? "" : "（復活待ち）"), NamedTextColor.WHITE);
+        }
+    }
+
+    private static void tell(Player p, String text, NamedTextColor color) {
+        p.sendMessage(Component.text("[SiegeBot] ", NamedTextColor.GOLD).append(Component.text(text, color)));
+    }
+
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command command, String label, String[] args) {
+        List<String> r = new ArrayList<>();
+        if (args.length == 1) {
+            String t = args[0].toLowerCase(Locale.ROOT);
+            for (String s : SUBS) {
+                if (s.startsWith(t)) {
+                    r.add(s);
+                }
+            }
+        } else if (args.length == 2 && args[0].equalsIgnoreCase("hold")) {
+            for (String name : plugin.data().places().keySet()) {
+                if (name.toLowerCase(Locale.ROOT).startsWith(args[1].toLowerCase(Locale.ROOT))) {
+                    r.add(name);
+                }
+            }
+        }
+        return r;
+    }
+}

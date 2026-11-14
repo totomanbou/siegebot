@@ -1,0 +1,22 @@
+# ビルドの成果物
+target/
+
+# 手元に置いた道具（Maven 本体と依存の置き場）と、その出力
+tools/apache-maven-*/
+tools/m2/
+tools/cp.txt
+tools/deps.txt
+
+# 手元の試験サーバー（Paper・Citizens・ItemJoin の jar、ワールド、RCON の設定）
+testserver/
+
+# 配布用の zip と測定の結果
+*.zip
+bench/results_*.jsonl
+
+# エディタ・OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
