@@ -25,7 +25,7 @@ import org.bukkit.entity.Player;
  *   <li>/sbc hold                 … 自分の視点の先（見ているブロックの所）を守らせる</li>
  *   <li>/sbc call                 … 自分の所へ瞬間移動させる（方針はそのまま）</li>
  *   <li>/sbc stance [push|guard]  … 構えを変える（引数なしなら切り替え）。動きはそのまま</li>
- *   <li>/sbc target               … 指示する相手を切り替える（専用のボットが無効のときだけ）</li>
+ *   <li>/sbc target               … 指示する相手を切り替える（全員 → 1 体ずつ → 全員）</li>
  *   <li>/sbc status               … ボットの方針の一覧</li>
  * </ul>
  */
@@ -95,17 +95,27 @@ public final class PlayerCommand implements TabExecutor {
         return plugin.settings().personalBots;
     }
 
-    /** 自分の専用のボット。なければ null。 */
-    SoldierBot ownBot(Player p, Side side) {
-        SoldierBot b = plugin.bots().ownedBy(p.getUniqueId());
-        return b != null && b.side() == side ? b : null;
+    /** 自分の専用のボット（このチームのもの、出した順）。なければ空。 */
+    List<SoldierBot> ownBots(Player p, Side side) {
+        List<SoldierBot> r = new ArrayList<>();
+        for (SoldierBot b : plugin.bots().ownedBy(p.getUniqueId())) {
+            if (b.side() == side) {
+                r.add(b);
+            }
+        }
+        return r;
     }
 
-    /** 選んでいる相手のボット名。全員なら null（選んだボットが消えていたら全員に戻す）。 */
+    /** 指示する相手に選べるボット: 専用のボットが有効なら自分のボット、無効ならチームのボット全員。 */
+    List<SoldierBot> candidates(Player p, Side side) {
+        return personal() ? ownBots(p, side) : plugin.bots().of(side);
+    }
+
+    /** 選んでいる相手のボット名。全員なら null（選んだボットが消えた・選べなくなったら全員に戻す）。 */
     String selectedName(Player p, Side side) {
         String name = selected.get(p.getUniqueId());
         SoldierBot b = name == null ? null : plugin.bots().get(name);
-        if (b != null && b.side() == side) {
+        if (b != null && candidates(p, side).contains(b)) {
             return b.name();
         }
         selected.remove(p.getUniqueId());
@@ -121,14 +131,10 @@ public final class PlayerCommand implements TabExecutor {
         }
     }
 
-    /** 指示が効くボット。専用のボットが有効なら自分のボットだけ、そうでなければ選んだ相手（全員か 1 体）。 */
+    /** 指示が効くボット: 選んだ相手（全員か 1 体）。専用のボットが有効なら、自分のボットの中から選ぶ。 */
     List<SoldierBot> targets(Player p, Side side) {
-        if (personal()) {
-            SoldierBot b = ownBot(p, side);
-            return b == null ? List.of() : List.of(b);
-        }
         String name = selectedName(p, side);
-        return name == null ? plugin.bots().of(side) : List.of(plugin.bots().get(name));
+        return name == null ? candidates(p, side) : List.of(plugin.bots().get(name));
     }
 
     // ---- 指示 ----
@@ -138,7 +144,6 @@ public final class PlayerCommand implements TabExecutor {
         apply(p, side, b -> Order.follow(p.getName(), b.order().stance()));
     }
 
-    /** 視点の先（見ているブロックの、見ている面の手前）を守らせる。構えは今のまま。 */
     /**
      * 自分の所（足元の地面）へ瞬間移動させる。方針はそのまま（「守れ」のままなら、守る地点へ歩いて戻る）。
      * 倒れているボットは呼べない。orders.call-cooldown-seconds が 0 より大きければ、その間は続けて呼べない。
@@ -153,22 +158,28 @@ public final class PlayerCommand implements TabExecutor {
             return;
         }
         org.bukkit.Location to = BotManager.groundBelow(p.getLocation());
-        int moved = 0;
+        List<SoldierBot> moved = new ArrayList<>();
+        List<String> down = new ArrayList<>();
         for (SoldierBot b : targets(p, side)) {
             if (!b.alive()) {
-                tell(p, b.name() + " は倒れているので呼べません（コマンドブロックで蘇生してください）。", NamedTextColor.RED);
+                down.add(b.name());
                 continue;
             }
             b.npc.getNavigator().cancelNavigation();
             b.npc.getEntity().teleport(to);
-            plugin.bots().say(b, "到着した");
-            moved++;
+            moved.add(b);
         }
-        if (moved > 0) {
+        if (!down.isEmpty()) {
+            tell(p, String.join("・", down) + " は倒れているので呼べません（コマンドブロックで蘇生してください）。",
+                    NamedTextColor.RED);
+        }
+        if (!moved.isEmpty()) {
+            plugin.bots().say(moved.get(0), moved.size() == 1 ? "到着した" : moved.size() + " 体到着した");
             lastCall.put(p.getUniqueId(), now);
         }
     }
 
+    /** 視点の先（見ているブロックの、見ている面の手前）を守らせる。構えは今のまま。 */
     void holdLookPoint(Player p, Side side) {
         Point point = plugin.bots().lookPoint(p);
         if (point == null) {
@@ -201,11 +212,7 @@ public final class PlayerCommand implements TabExecutor {
     }
 
     private void cycleTarget(Player p, Side side) {
-        if (personal()) {
-            tell(p, "指示できるのは自分のボットだけです。", NamedTextColor.YELLOW);
-            return;
-        }
-        List<SoldierBot> mine = plugin.bots().of(side);
+        List<SoldierBot> mine = candidates(p, side);
         String cur = selectedName(p, side);
         int idx = -1;
         for (int i = 0; i < mine.size(); i++) {
@@ -222,11 +229,12 @@ public final class PlayerCommand implements TabExecutor {
     }
 
     private void status(Player p, Side side) {
-        if (!personal()) {
+        List<SoldierBot> all = candidates(p, side);
+        if (all.size() > 1) {
             String cur = selectedName(p, side);
             tell(p, "指示する相手: " + (cur == null ? "全員" : cur), NamedTextColor.GRAY);
         }
-        for (SoldierBot b : targets(p, side)) {
+        for (SoldierBot b : all) {
             tell(p, b.name() + "：" + b.order().describe() + (b.alive() ? "" : "（倒れている）"), NamedTextColor.WHITE);
         }
     }

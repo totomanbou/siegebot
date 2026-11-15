@@ -167,25 +167,25 @@ public final class BotManager {
         bots.clear();
     }
 
-    // ---- 専用のボット（プレイヤー 1 人に 1 体） ----
+    // ---- 専用のボット（プレイヤーごと。1 人が複数体持てる） ----
 
-    /** そのプレイヤーの専用のボット。なければ null。 */
-    public SoldierBot ownedBy(UUID player) {
+    /** そのプレイヤーの専用のボット（出した順）。なければ空。 */
+    public List<SoldierBot> ownedBy(UUID player) {
+        List<SoldierBot> r = new ArrayList<>();
         if (player == null) {
-            return null;
+            return r;
         }
         for (SoldierBot b : bots.values()) {
             if (player.equals(b.owner)) {
-                return b;
+                r.add(b);
             }
         }
-        return null;
+        return r;
     }
 
-    /** そのプレイヤーの専用のボットを消す。 */
+    /** そのプレイヤーの専用のボットを全部消す。 */
     public void removeOwned(UUID player) {
-        SoldierBot b = ownedBy(player);
-        if (b != null) {
+        for (SoldierBot b : ownedBy(player)) {
             remove(b.name);
         }
     }
@@ -207,9 +207,10 @@ public final class BotManager {
         for (Player p : Bukkit.getOnlinePlayers()) {
             online.add(p.getUniqueId());
             Side side = sideOf(p);
-            SoldierBot mine = ownedBy(p.getUniqueId());
-            if (mine != null && mine.side != side) {
-                remove(mine.name);
+            for (SoldierBot mine : ownedBy(p.getUniqueId())) {
+                if (mine.side != side) {
+                    remove(mine.name);
+                }
             }
         }
         for (SoldierBot b : new ArrayList<>(bots.values())) {
@@ -219,55 +220,97 @@ public final class BotManager {
         }
     }
 
-    /** {@link #revive} の結果。 */
-    public enum ReviveResult {
-        /** 初めて出した */
-        SPAWNED,
-        /** 倒れていたのを蘇生した */
-        REVIVED,
-        /** もう生きている（何もしない） */
-        ALREADY_ALIVE,
-        /** 攻め・守りのどちらのチームにも入っていない */
-        NO_TEAM,
-        /** 出す場所が決まらない（ワールドが読み込まれていないなど） */
-        NO_PLACE,
-        /** personal-bots.enabled が false */
-        DISABLED
+    /**
+     * {@link #revive} の結果（1 人分）。
+     *
+     * @param status  OK なら下の数が意味を持つ
+     * @param spawned 新しく出した数
+     * @param revived 倒れていたのを蘇生した数
+     * @param alive   もともと生きていた数（何もしなかった）
+     */
+    public record ReviveReport(Status status, int spawned, int revived, int alive) {
+        public enum Status {
+            OK,
+            /** 攻め・守りのどちらのチームにも入っていない */
+            NO_TEAM,
+            /** 出す場所が決まらず、1 体も出せなかった */
+            NO_PLACE,
+            /** personal-bots.enabled が false */
+            DISABLED
+        }
+
+        static ReviveReport of(Status s) {
+            return new ReviveReport(s, 0, 0, 0);
+        }
     }
 
     /**
-     * プレイヤーの専用のボットを出す。まだなければ新しく出し（持ち主に追従）、倒れていれば蘇生する（方針はそのまま）。
-     * 出す場所は陣営のリスポーン地点、未設定ならプレイヤーのいる所。
+     * プレイヤーの専用のボットを count 体そろえる。持っているボットのうち倒れているものを蘇生し（方針はそのまま）、
+     * 足りなければ新しく出す（持ち主に追従）。出す場所は陣営のリスポーン地点、未設定ならプレイヤーのいる所。
+     *
+     * <p>count が null なら「持っている全部を蘇生する（1 体もなければ 1 体出す）」。count は 1〜max-per-player に収める。
+     * count より多く持っているときは、多い分には手を付けない（消さない・蘇生しない）。
      */
-    public ReviveResult revive(Player p) {
+    public ReviveReport revive(Player p, Integer count) {
         if (!plugin.settings().personalBots) {
-            return ReviveResult.DISABLED;
+            return ReviveReport.of(ReviveReport.Status.DISABLED);
         }
         Side side = sideOf(p);
         if (side == null) {
-            return ReviveResult.NO_TEAM;
+            return ReviveReport.of(ReviveReport.Status.NO_TEAM);
         }
-        SoldierBot mine = ownedBy(p.getUniqueId());
-        if (mine != null && mine.side != side) {
-            remove(mine.name);
-            mine = null;
+        for (SoldierBot old : ownedBy(p.getUniqueId())) {
+            if (old.side != side) {
+                remove(old.name); // チームを移った後の古いボット
+            }
         }
-        if (mine == null) {
+        List<SoldierBot> mine = ownedBy(p.getUniqueId());
+        int max = plugin.settings().maxBotsPerPlayer;
+        int want = Math.max(1, Math.min(max, count == null ? Math.max(1, mine.size()) : count));
+
+        int spawned = 0;
+        int revived = 0;
+        int alive = 0;
+        SoldierBot voice = null;
+        for (int i = 0; i < Math.min(want, mine.size()); i++) {
+            SoldierBot b = mine.get(i);
+            if (b.npc.isSpawned()) {
+                alive++;
+            } else if (reviveBot(b, false)) {
+                revived++;
+                voice = voice == null ? b : voice;
+            }
+        }
+        for (int i = mine.size(); i < want; i++) {
             SoldierBot b = spawn(personalName(p.getName()), side, p.getLocation(), p.getUniqueId(), p.getName());
             if (b == null) {
-                return ReviveResult.NO_PLACE;
+                break;
             }
-            say(b, p.getName() + " の兵として参戦する");
-            return ReviveResult.SPAWNED;
+            spawned++;
+            voice = voice == null ? b : voice;
         }
-        if (mine.npc.isSpawned()) {
-            return ReviveResult.ALREADY_ALIVE;
+        if (voice != null) {
+            List<String> parts = new ArrayList<>();
+            if (spawned > 0) {
+                parts.add(spawned + " 体参戦");
+            }
+            if (revived > 0) {
+                parts.add(revived + " 体復活");
+            }
+            say(voice, p.getName() + " の兵、" + String.join("・", parts) + "した");
         }
-        return reviveBot(mine) ? ReviveResult.REVIVED : ReviveResult.NO_PLACE;
+        if (spawned + revived + alive == 0) {
+            return ReviveReport.of(ReviveReport.Status.NO_PLACE);
+        }
+        return new ReviveReport(ReviveReport.Status.OK, spawned, revived, alive);
     }
 
     /** 倒れているボットを出し直す（方針はそのまま）。生きていれば何もせず false。 */
     public boolean reviveBot(SoldierBot bot) {
+        return reviveBot(bot, true);
+    }
+
+    private boolean reviveBot(SoldierBot bot, boolean announce) {
         if (bot.npc.isSpawned()) {
             return false;
         }
@@ -276,19 +319,25 @@ public final class BotManager {
             return false;
         }
         bot.target = null;
-        say(bot, "復活した");
+        if (announce) {
+            say(bot, "復活した");
+        }
         return true;
     }
 
-    /** 持ち主が倒れたら、そのボットも倒す。倒れたボットは /sb revive まで倒れたまま。 */
-    public void killOwnedBot(UUID owner) {
-        SoldierBot b = ownedBy(owner);
-        if (b != null && b.npc.isSpawned() && b.npc.getEntity() instanceof LivingEntity le) {
-            le.setHealth(0.0);
+    /** 持ち主が倒れたら、その専用のボットを全部倒す。倒れたボットは /sb revive まで倒れたまま。 */
+    public void killOwnedBots(UUID owner) {
+        for (SoldierBot b : ownedBy(owner)) {
+            if (b.npc.isSpawned() && b.npc.getEntity() instanceof LivingEntity le) {
+                le.setHealth(0.0);
+            }
         }
     }
 
-    /** 専用のボットの名前（「名前の兵」）。16 文字を超えるなら名前を縮め、他と重なれば番号を付ける。 */
+    /**
+     * 専用のボットの名前（「名前の兵」、2 体目からは「名前2の兵」…）。16 文字に収まるよう名前を縮める
+     * （max-per-player は 9 までなので番号は 1 桁）。
+     */
     private String personalName(String player) {
         String base = player.length() > 14 ? player.substring(0, 14) : player;
         String name = base + "の兵";

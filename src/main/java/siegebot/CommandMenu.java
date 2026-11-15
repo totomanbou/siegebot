@@ -24,7 +24,7 @@ import org.bukkit.inventory.meta.ItemMeta;
  * 指揮メニュー（チェストの画面）。/sbc menu で開く。ItemJoin の指揮棒の右クリックから呼ぶ想定。
  *
  * <pre>
- * 1 段目: 自分のボットの状態（専用のボットが無効なら、指示する相手の選択）
+ * 1 段目: 指示する相手の選択（全員・1 体ずつ）。自分のボットが 1 体だけなら、その状態の表示
  * 2 段目: ついてこい・呼び寄せる・視点の先を守れ      … 押すと指示して画面を閉じる
  * 3 段目: 構え（積極的・持ち場優先）・閉じる          … 構えは押すと変えて、画面はそのまま
  * </pre>
@@ -60,19 +60,21 @@ public final class CommandMenu implements Listener {
                 Component.text("指揮メニュー（" + side.label() + "）", NamedTextColor.DARK_GRAY));
         h.inventory = inv;
 
-        // ---- 1 段目: 指示する相手（専用のボットなら自分のボットの状態） ----
+        // ---- 1 段目: 指示する相手（専用のボットが有効なら、自分のボットの中から選ぶ） ----
         String who;
-        if (commands.personal()) {
-            SoldierBot own = commands.ownBot(p, side);
+        List<SoldierBot> choices = commands.candidates(p, side);
+        if (commands.personal() && choices.size() <= 1) {
+            // 自分のボットが 1 体なら、選ぶ段は出さずに状態だけを表示する
+            SoldierBot own = choices.isEmpty() ? null : choices.get(0);
             who = own == null ? "自分のボット" : own.name();
             List<String> lore = own == null ? List.of("まだ出ていない")
                     : List.of("今: " + own.order().describe(), own.alive() ? "生存" : "倒れている（コマンドブロックで蘇生）");
             put(h, 4, button(Material.PLAYER_HEAD, who, NamedTextColor.AQUA, false, lore), () -> open(p, side));
         } else {
-            List<SoldierBot> mine = plugin.bots().of(side);
+            List<SoldierBot> mine = choices;
             String sel = commands.selectedName(p, side);
             put(h, 0, button(Material.NETHER_STAR, "全員に指示", NamedTextColor.GOLD, sel == null,
-                    List.of("ボット全員に同じ指示を出す")), () -> {
+                    List.of(commands.personal() ? "自分のボット全員に同じ指示を出す" : "ボット全員に同じ指示を出す")), () -> {
                         commands.select(p, null);
                         open(p, side);
                     });

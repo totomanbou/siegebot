@@ -15,6 +15,8 @@ public final class Settings {
 
     /** プレイヤー 1 人に 1 体の専用のボットを出し、指示は自分のボットにだけ効くようにする。 */
     public final boolean personalBots;
+    /** 1 人が持てる専用のボットの上限（1〜9）。 */
+    public final int maxBotsPerPlayer;
     /** 「視点の先を守れ」で狙える最大の距離（ブロック）。 */
     public final double holdMaxDistance;
     /** 「呼び寄せる」を続けて使えない時間（tick）。0 なら制限なし。 */
@@ -45,6 +47,7 @@ public final class Settings {
         defendTeam = c.getString("teams.defend", "Defence");
 
         personalBots = c.getBoolean("personal-bots.enabled", true);
+        maxBotsPerPlayer = Math.max(1, Math.min(9, c.getInt("personal-bots.max-per-player", 5)));
         holdMaxDistance = Math.max(4, c.getDouble("orders.hold-max-distance", 48));
         callCooldownTicks = (int) Math.round(Math.max(0, c.getDouble("orders.call-cooldown-seconds", 0)) * 20);
 
