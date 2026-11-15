@@ -438,13 +438,23 @@ public final class BotManager {
         return r;
     }
 
-    /** ボットの発言を、同じ陣営のプレイヤーにだけ送る。 */
+    /**
+     * ボットの発言を送る。持ち主のいるボットは持ち主にだけ（オフラインなら誰にも送らない）、
+     * 持ち主のいないボット（/sb spawn で出したもの）は同じ陣営のプレイヤーに送る。
+     */
     public void say(SoldierBot bot, String text) {
         if (text == null || text.isBlank()) {
             return;
         }
         Component msg = Component.text("<" + bot.name + "> ", NamedTextColor.AQUA)
                 .append(Component.text(text, NamedTextColor.WHITE));
+        if (bot.owner != null) {
+            Player owner = Bukkit.getPlayer(bot.owner);
+            if (owner != null) {
+                owner.sendMessage(msg);
+            }
+            return;
+        }
         for (Player p : humans(bot.side)) {
             p.sendMessage(msg);
         }
