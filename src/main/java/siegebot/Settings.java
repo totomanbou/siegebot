@@ -38,6 +38,8 @@ public final class Settings {
     public final double regenAmount;
     /** 自動の回復の間隔（tick）。 */
     public final int regenIntervalTicks;
+    /** ダメージを受けてから自動の回復を始めるまでの時間（tick）。 */
+    public final int regenDelayTicks;
     public final float speed;
     /** 狙いを選び直す間隔（tick）。 */
     public final int retargetTicks;
@@ -73,6 +75,7 @@ public final class Settings {
         regenAmount = Math.max(0.0, c.getDouble("combat.regen-amount", 1.0));
         regenIntervalTicks = Math.max(BotManager.TICK_PERIOD,
                 (int) Math.round(c.getDouble("combat.regen-interval-seconds", 2.0) * 20));
+        regenDelayTicks = (int) Math.round(Math.max(0, c.getDouble("combat.regen-delay-seconds", 10.0)) * 20);
         speed = (float) c.getDouble("combat.speed", 1.5);
         damageMultiplier = Math.max(0.0, c.getDouble("combat.damage-multiplier", 1.2));
         defenseMultiplier = Math.max(0.1, c.getDouble("combat.defense-multiplier", 1.2));

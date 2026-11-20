@@ -45,6 +45,18 @@ public final class GameListener implements Listener {
         }
     }
 
+    /** ボットがダメージを受けた時刻を覚える（自動の回復を regen-delay-seconds 止めるため）。 */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onBotDamaged(org.bukkit.event.entity.EntityDamageEvent event) {
+        if (event.getFinalDamage() <= 0) {
+            return;
+        }
+        SoldierBot bot = plugin.bots().byEntity(event.getEntity());
+        if (bot != null) {
+            bot.lastDamagedTick = org.bukkit.Bukkit.getCurrentTick();
+        }
+    }
+
     /** 抜けたプレイヤーの専用のボットを消す。 */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onQuit(org.bukkit.event.player.PlayerQuitEvent event) {

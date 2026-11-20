@@ -21,6 +21,8 @@ public final class SoldierBot {
     /** 動けなくなったかの見張り: 最後に 1 ブロック以上動いたと確かめた位置と時刻。 */
     org.bukkit.Location stuckPos;
     long stuckTick;
+    /** 最後にダメージを受けた時刻（サーバーの tick）。自動の回復はこの後 regen-delay-seconds 待つ。 */
+    long lastDamagedTick = Long.MIN_VALUE / 2;
 
     SoldierBot(String name, Side side, NPC npc, UUID owner) {
         this.name = name;

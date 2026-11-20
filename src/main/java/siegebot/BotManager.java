@@ -610,7 +610,8 @@ public final class BotManager {
         for (SoldierBot bot : bots.values()) {
             try {
                 if (regen && bot.npc.isSpawned() && bot.npc.getEntity() instanceof LivingEntity le
-                        && !le.isDead() && le.getHealth() < le.getMaxHealth()) {
+                        && !le.isDead() && le.getHealth() < le.getMaxHealth()
+                        && now - bot.lastDamagedTick >= s.regenDelayTicks) {
                     le.heal(s.regenAmount, org.bukkit.event.entity.EntityRegainHealthEvent.RegainReason.REGEN);
                 }
                 tickBot(bot, now);
