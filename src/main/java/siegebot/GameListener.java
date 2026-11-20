@@ -26,6 +26,25 @@ public final class GameListener implements Listener {
         plugin.bots().killOwnedBots(event.getEntity().getUniqueId());
     }
 
+    /**
+     * ボットの死亡メッセージを全員に流さず、持ち主にだけ送る（持ち主のいないボットは同じ陣営の全員）。
+     * サーバーのログには残す。
+     */
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onBotDeath(org.bukkit.event.entity.PlayerDeathEvent event) {
+        SoldierBot bot = plugin.bots().byEntity(event.getEntity());
+        if (bot == null) {
+            return;
+        }
+        net.kyori.adventure.text.Component msg = event.deathMessage();
+        event.deathMessage(null);
+        if (msg != null) {
+            plugin.bots().sendToAudience(bot, msg);
+            plugin.getLogger().info("死亡: " + net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer
+                    .plainText().serialize(msg));
+        }
+    }
+
     /** 抜けたプレイヤーの専用のボットを消す。 */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onQuit(org.bukkit.event.player.PlayerQuitEvent event) {

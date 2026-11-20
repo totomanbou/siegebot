@@ -501,6 +501,14 @@ public final class BotManager {
         }
         Component msg = Component.text("<" + bot.name + "> ", NamedTextColor.AQUA)
                 .append(Component.text(text, NamedTextColor.WHITE));
+        sendToAudience(bot, msg);
+    }
+
+    /**
+     * ボットに関する知らせを送る。持ち主がいれば持ち主にだけ（いなければ誰にも送らない）、
+     * 持ち主のいないボット（/sb spawn）なら同じ陣営のプレイヤー全員に送る。
+     */
+    public void sendToAudience(SoldierBot bot, Component msg) {
         if (bot.owner != null) {
             Player owner = Bukkit.getPlayer(bot.owner);
             if (owner != null) {
