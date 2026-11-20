@@ -174,7 +174,8 @@ public final class PlayerCommand implements TabExecutor {
                 continue;
             }
             b.npc.getNavigator().cancelNavigation();
-            b.npc.getEntity().teleport(to);
+            // 名前の表示を乗せているので、乗客を残したまま移す
+            b.npc.getEntity().teleport(to, io.papermc.paper.entity.TeleportFlag.EntityState.RETAIN_PASSENGERS);
             moved.add(b);
         }
         if (!down.isEmpty()) {

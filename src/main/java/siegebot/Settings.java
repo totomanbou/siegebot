@@ -24,6 +24,9 @@ public final class Settings {
     /** CombatLog で戦闘中のプレイヤーは「呼び寄せる」を使えない。 */
     public final boolean callBlockedInCombat;
 
+    /** true: ボットの頭の上の名前を同じ陣営のプレイヤーにだけ見せる。false: 全員に見せる（Citizens の表示）。 */
+    public final boolean nameTagTeamOnly;
+
     public final double engageRadius;
     public final double pushLeash;
     public final double guardLeash;
@@ -63,6 +66,8 @@ public final class Settings {
         holdMaxDistance = Math.max(4, c.getDouble("orders.hold-max-distance", 48));
         callCooldownTicks = (int) Math.round(Math.max(0, c.getDouble("orders.call-cooldown-seconds", 0)) * 20);
         callBlockedInCombat = c.getBoolean("orders.call-blocked-in-combat", true);
+
+        nameTagTeamOnly = !"all".equalsIgnoreCase(c.getString("name-tag.visible-to", "team"));
 
         engageRadius = c.getDouble("combat.engage-radius", 16);
         pushLeash = c.getDouble("combat.push-leash", 24);

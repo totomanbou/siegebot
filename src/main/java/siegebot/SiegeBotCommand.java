@@ -370,7 +370,8 @@ public final class SiegeBotCommand implements TabExecutor {
             return;
         }
         b.npc.getNavigator().cancelNavigation(); // 移す前の経路を捨てる（残ると古い経路のまま止まる）
-        b.npc.getEntity().teleport(to);
+        // 名前の表示を乗せているので、乗客を残したまま移す
+        b.npc.getEntity().teleport(to, io.papermc.paper.entity.TeleportFlag.EntityState.RETAIN_PASSENGERS);
         msg(sender, b.name() + " を移しました。");
     }
 

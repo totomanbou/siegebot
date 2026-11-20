@@ -66,9 +66,12 @@ public final class BotManager {
     /** 最後に自動で回復させた時刻（サーバーの tick）。 */
     private long lastRegenTick;
 
+    private final NameTags nameTags;
+
     public BotManager(SiegeBotPlugin plugin) {
         this.plugin = plugin;
         this.registry = CitizensAPI.createInMemoryNPCRegistry("siegebot");
+        this.nameTags = new NameTags(plugin);
     }
 
     // ---- 一覧 ----
@@ -151,6 +154,9 @@ public final class BotManager {
                 ? Order.follow(ownerName, Order.Stance.GUARD)
                 : Order.hold(Point.of(at), Order.Stance.GUARD);
         bots.put(name.toLowerCase(Locale.ROOT), bot);
+        if (plugin.settings().nameTagTeamOnly) {
+            npc.data().set(NPC.Metadata.NAMEPLATE_VISIBLE, false); // Citizens の名前を一瞬も出さない
+        }
         npc.spawn(at, SpawnReason.PLUGIN);
         return bot;
     }
@@ -160,11 +166,13 @@ public final class BotManager {
         if (b == null) {
             return false;
         }
+        nameTags.remove(b);
         b.npc.destroy();
         return true;
     }
 
     public void removeAll() {
+        nameTags.removeAll();
         for (SoldierBot b : bots.values()) {
             b.npc.destroy();
         }
@@ -615,6 +623,7 @@ public final class BotManager {
                     le.heal(s.regenAmount, org.bukkit.event.entity.EntityRegainHealthEvent.RegainReason.REGEN);
                 }
                 tickBot(bot, now);
+                nameTags.update(bot);
             } catch (RuntimeException e) {
                 plugin.getLogger().warning("ボット " + bot.name + " の処理で例外: " + e);
             }

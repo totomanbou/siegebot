@@ -26,6 +26,11 @@ orders:
   #       CombatLog が入っていなければ何もしない
   call-blocked-in-combat: true
 
+# ボットの頭の上の名前
+name-tag:
+  # team: 同じ陣営（チーム）のプレイヤーにだけ見える。all: 全員に見える（Citizens の名前の表示のまま）
+  visible-to: team
+
 combat:
   # 敵に気づく距離（ブロック）
   engage-radius: 16
