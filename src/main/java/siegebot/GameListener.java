@@ -17,11 +17,18 @@ public final class GameListener implements Listener {
     }
 
 
-    /** 持ち主が倒れたら、その専用のボットも倒す（自動では復活しない）。 */
+    /**
+     * 持ち主が倒れたら、その専用のボットも倒す（自動では復活しない）。
+     * 指揮もリセットする: 方針は「ついてこい・持ち場優先」に、指示する相手は「全員」に戻す。
+     */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onOwnerDeath(org.bukkit.event.entity.PlayerDeathEvent event) {
         if (plugin.bots().byEntity(event.getEntity()) != null) {
             return; // ボット自身（プレイヤーの姿の NPC）の死では何もしない
+        }
+        plugin.bots().resetOrders(event.getEntity());
+        if (plugin.playerCommand() != null) {
+            plugin.playerCommand().select(event.getEntity(), null);
         }
         plugin.bots().killOwnedBots(event.getEntity().getUniqueId());
     }

@@ -15,6 +15,7 @@ public final class SiegeBotPlugin extends JavaPlugin {
     private BotManager bots;
     private BukkitTask botTask;
     private CombatCheck combat;
+    private PlayerCommand playerCommand;
 
     @Override
     public void onEnable() {
@@ -35,6 +36,7 @@ public final class SiegeBotPlugin extends JavaPlugin {
         PluginCommand sbc = getCommand("sbc");
         if (sbc != null) {
             PlayerCommand pc = new PlayerCommand(this);
+            playerCommand = pc;
             sbc.setExecutor(pc);
             sbc.setTabCompleter(pc);
             Bukkit.getPluginManager().registerEvents(pc.menu(), this);
@@ -89,6 +91,11 @@ public final class SiegeBotPlugin extends JavaPlugin {
 
     public BotManager bots() {
         return bots;
+    }
+
+    /** /sbc と指揮メニュー（sbc が plugin.yml にないときは null）。 */
+    PlayerCommand playerCommand() {
+        return playerCommand;
     }
 
     /** CombatLog の「戦闘中」の判定。 */

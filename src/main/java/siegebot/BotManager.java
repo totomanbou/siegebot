@@ -337,6 +337,14 @@ public final class BotManager {
         return true;
     }
 
+    /** 持ち主の専用のボットの方針を、出したときと同じ「持ち主についていく・持ち場優先」に戻す。 */
+    public void resetOrders(Player owner) {
+        for (SoldierBot b : ownedBy(owner.getUniqueId())) {
+            b.order = Order.follow(owner.getName(), Order.Stance.GUARD);
+            b.target = null;
+        }
+    }
+
     /** 持ち主が倒れたら、その専用のボットを全部倒す。倒れたボットは /sb revive まで倒れたまま。 */
     public void killOwnedBots(UUID owner) {
         for (SoldierBot b : ownedBy(owner)) {
