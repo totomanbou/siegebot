@@ -62,6 +62,8 @@ public final class Settings {
     public final double shieldMoveSpeedMultiplier;
     /** 脅威がなくなってから盾を下ろすまでの時間（tick。最小 2）。 */
     public final int shieldLowerAfterTicks;
+    /** 盾を構えてから防げるようになるまでの時間（tick。バニラのプレイヤーは 5）。 */
+    public final int shieldBlockingDelayTicks;
 
     /** 装備の部位（hand, off_hand, helmet, chestplate, leggings, boots）→ アイテム。 */
     public final Map<String, Material> equipment = new LinkedHashMap<>();
@@ -104,6 +106,7 @@ public final class Settings {
         shieldMoveSpeedMultiplier = Math.max(0.05, c.getDouble("shield.move-speed-multiplier", 0.3));
         shieldLowerAfterTicks = Math.max(Shields.TICK_PERIOD,
                 (int) Math.round(c.getDouble("shield.lower-after-seconds", 0.5) * 20));
+        shieldBlockingDelayTicks = Math.max(0, c.getInt("shield.blocking-delay-ticks", 0));
 
         ConfigurationSection eq = c.getConfigurationSection("equipment");
         if (eq != null) {

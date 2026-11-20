@@ -11,6 +11,8 @@ import org.bukkit.event.entity.EntityDamageByEntityEvent;
 public final class GameListener implements Listener {
 
     private final SiegeBotPlugin plugin;
+    /** これ未満の残りのダメージは 0 とみなす（盾で防いだかの判定）。 */
+    static final double BLOCKED_EPSILON = 0.01;
 
     public GameListener(SiegeBotPlugin plugin) {
         this.plugin = plugin;
@@ -59,7 +61,9 @@ public final class GameListener implements Listener {
         if (bot == null) {
             return;
         }
-        if (event.getFinalDamage() > 0) {
+        // 盾で防ぐと残りのダメージは 0 になるはずだが、浮動小数の端数（6.67 - 6.6666… など）が残ることがあるので、
+        // 0 ちょうどではなく BLOCKED_EPSILON 未満で比べる（ちょうど 0 で比べると、防いだのにノックバックが消えなかった）
+        if (event.getFinalDamage() >= BLOCKED_EPSILON) {
             bot.lastDamagedTick = org.bukkit.Bukkit.getCurrentTick();
         } else if (event.getEntity() instanceof org.bukkit.entity.HumanEntity h && h.isBlocking()) {
             bot.lastBlockedTick = org.bukkit.Bukkit.getCurrentTick(); // 盾で防いだ（同じ tick のノックバックを消す）
@@ -76,6 +80,52 @@ public final class GameListener implements Listener {
         if (bot != null && bot.lastBlockedTick == org.bukkit.Bukkit.getCurrentTick()) {
             event.setCancelled(true);
         }
+    }
+
+    /** /sb debug kb で切り替える。true の間、ボットのダメージ・ノックバックをサーバーのログに出す（原因の調査用）。 */
+    static volatile boolean logKnockback;
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void logBotDamage(org.bukkit.event.entity.EntityDamageEvent event) {
+        if (!logKnockback || plugin.bots().byEntity(event.getEntity()) == null) {
+            return;
+        }
+        String by = event instanceof EntityDamageByEntityEvent e ? describe(e.getDamager()) : "-";
+        plugin.getLogger().info(String.format(java.util.Locale.ROOT,
+                "[kb] t=%d DMG %s cause=%s by=%s %s raw=%.2f final=%.9f cancelled=%s",
+                org.bukkit.Bukkit.getCurrentTick(), event.getEntity().getName(), event.getCause(), by,
+                shieldState(event.getEntity()), event.getDamage(), event.getFinalDamage(), event.isCancelled()));
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void logBotKnockback(io.papermc.paper.event.entity.EntityKnockbackEvent event) {
+        if (!logKnockback || plugin.bots().byEntity(event.getEntity()) == null) {
+            return;
+        }
+        String by = event instanceof io.papermc.paper.event.entity.EntityPushedByEntityAttackEvent e
+                ? describe(e.getPushedBy()) : "-";
+        plugin.getLogger().info(String.format(java.util.Locale.ROOT,
+                "[kb] t=%d KB  %s cause=%s by=%s %s vec=%s cancelled=%s",
+                org.bukkit.Bukkit.getCurrentTick(), event.getEntity().getName(), event.getCause(), by,
+                shieldState(event.getEntity()), event.getKnockback(), event.isCancelled()));
+    }
+
+    private static String describe(Entity e) {
+        if (e == null) {
+            return "null";
+        }
+        if (e instanceof Projectile pr) {
+            return e.getType() + "(shooter=" + (pr.getShooter() instanceof Entity s ? s.getName() : "なし") + ")";
+        }
+        return e.getType() + ":" + e.getName();
+    }
+
+    private static String shieldState(Entity e) {
+        if (!(e instanceof org.bukkit.entity.HumanEntity h)) {
+            return "";
+        }
+        return "blocking=" + h.isBlocking() + " using=" + h.hasActiveItem() + "(" + h.getActiveItemUsedTime() + "t)"
+                + " yaw=" + Math.round(e.getLocation().getYaw());
     }
 
     /** 抜けたプレイヤーの専用のボットを消す。 */

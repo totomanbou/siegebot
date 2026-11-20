@@ -1,5 +1,7 @@
 package siegebot;
 
+import io.papermc.paper.datacomponent.DataComponentTypes;
+import io.papermc.paper.datacomponent.item.BlocksAttacks;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -95,6 +97,7 @@ final class Shields {
             return;
         }
         if (!using) {
+            applyBlockDelay(bot, p, s);
             p.startUsingItem(EquipmentSlot.OFF_HAND);
             using = usingShield(p);
         }
@@ -208,6 +211,42 @@ final class Shields {
             }
             return bot.npc.getStoredLocation();
         };
+    }
+
+    /**
+     * 盾の「構えてから防げるようになるまでの時間」（アイテムの blocks_attacks の block_delay_seconds。バニラは 0.25 秒）を
+     * shield.blocking-delay-ticks に合わせる。ボットは気づいてから構えるので、0.25 秒待つと速い矢（引き切った弓）に
+     * 間に合わず、盾を上げているのに当たって下がる。この版の防ぐまでの遅れはエンティティではなくアイテムが持つ。
+     */
+    private static void applyBlockDelay(SoldierBot bot, Player p, Settings s) {
+        ItemStack shield = p.getInventory().getItemInOffHand();
+        BlocksAttacks ba = shield.getData(DataComponentTypes.BLOCKS_ATTACKS);
+        float want = s.shieldBlockingDelayTicks / 20f;
+        if (ba == null || Math.abs(ba.blockDelaySeconds() - want) < 1e-4) {
+            return;
+        }
+        BlocksAttacks.Builder b = BlocksAttacks.blocksAttacks()
+                .blockDelaySeconds(want)
+                .disableCooldownScale(ba.disableCooldownScale())
+                .damageReductions(ba.damageReductions());
+        if (ba.itemDamage() != null) {
+            b.itemDamage(ba.itemDamage());
+        }
+        if (ba.bypassedBy() != null) {
+            b.bypassedBy(ba.bypassedBy());
+        }
+        if (ba.blockSound() != null) {
+            b.blockSound(ba.blockSound());
+        }
+        if (ba.disableSound() != null) {
+            b.disableSound(ba.disableSound());
+        }
+        ItemStack changed = shield.clone();
+        changed.setData(DataComponentTypes.BLOCKS_ATTACKS, b);
+        // Citizens の装備にも入れる（入れないと Citizens が元の盾に戻す）
+        bot.npc.getOrAddTrait(net.citizensnpcs.api.trait.trait.Equipment.class)
+                .set(net.citizensnpcs.api.trait.trait.Equipment.EquipmentSlot.OFF_HAND, changed);
+        p.getInventory().setItemInOffHand(changed);
     }
 
     // ---- 状態の判定 ----

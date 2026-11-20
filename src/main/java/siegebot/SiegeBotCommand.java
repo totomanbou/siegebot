@@ -43,7 +43,15 @@ public final class SiegeBotCommand implements TabExecutor {
             case "set" -> set(sender, args);
             case "tp" -> tp(sender, args);
             case "protect" -> protect(sender, args);
-            case "debug" -> debug(sender);
+            case "debug" -> {
+                if (args.length >= 2 && args[1].equalsIgnoreCase("kb")) {
+                    GameListener.logKnockback = !GameListener.logKnockback;
+                    msg(sender, "ボットのダメージ・ノックバックのログを" + (GameListener.logKnockback ? "出します" : "止めます")
+                            + "（サーバーのログに出る）。");
+                } else {
+                    debug(sender);
+                }
+            }
             case "reload" -> {
                 plugin.reloadAll();
                 msg(sender, "config.yml と data.yml を読み直しました。");
