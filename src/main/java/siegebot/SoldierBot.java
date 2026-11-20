@@ -23,6 +23,8 @@ public final class SoldierBot {
     long stuckTick;
     /** 最後にダメージを受けた時刻（サーバーの tick）。自動の回復はこの後 regen-delay-seconds 待つ。 */
     long lastDamagedTick = Long.MIN_VALUE / 2;
+    /** 最後に盾で攻撃を防いだ時刻（サーバーの tick）。同じ tick のノックバックを消すのに使う。 */
+    long lastBlockedTick = Long.MIN_VALUE / 2;
     /** 盾を構えている（遅い歩きと向きの指定を入れている）間は true。{@link Shields} が決める。 */
     boolean shieldUp;
     /** 構えている間に向く地点（脅威の位置）。構えていなければ null。 */

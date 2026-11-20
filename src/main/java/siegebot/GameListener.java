@@ -55,12 +55,26 @@ public final class GameListener implements Listener {
     /** ボットがダメージを受けた時刻を覚える（自動の回復を regen-delay-seconds 止めるため）。 */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBotDamaged(org.bukkit.event.entity.EntityDamageEvent event) {
-        if (event.getFinalDamage() <= 0) {
+        SoldierBot bot = plugin.bots().byEntity(event.getEntity());
+        if (bot == null) {
             return;
         }
-        SoldierBot bot = plugin.bots().byEntity(event.getEntity());
-        if (bot != null) {
+        if (event.getFinalDamage() > 0) {
             bot.lastDamagedTick = org.bukkit.Bukkit.getCurrentTick();
+        } else if (event.getEntity() instanceof org.bukkit.entity.HumanEntity h && h.isBlocking()) {
+            bot.lastBlockedTick = org.bukkit.Bukkit.getCurrentTick(); // 盾で防いだ（同じ tick のノックバックを消す）
+        }
+    }
+
+    /**
+     * 盾で防いだときのノックバックを消す。防いだ攻撃のダメージの直後、同じ tick にノックバック
+     * （原因 ENTITY_ATTACK）が来るので、防いだ tick と同じ tick のノックバックだけを取り消す。
+     */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onBlockedKnockback(io.papermc.paper.event.entity.EntityKnockbackEvent event) {
+        SoldierBot bot = plugin.bots().byEntity(event.getEntity());
+        if (bot != null && bot.lastBlockedTick == org.bukkit.Bukkit.getCurrentTick()) {
+            event.setCancelled(true);
         }
     }
 
