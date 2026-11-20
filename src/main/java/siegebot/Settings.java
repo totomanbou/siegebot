@@ -54,6 +54,15 @@ public final class Settings {
     public final int attackDelayTicks;
     public final String pathfinder;
 
+    /** false なら盾を構えない（左手の盾も持たせない）。 */
+    public final boolean shieldEnabled;
+    /** 狙っている敵・飛んでくる矢に気づく距離（ブロック）。 */
+    public final double shieldDetectRadius;
+    /** 構えている間の移動の速さ（speed に掛ける倍率）。 */
+    public final double shieldMoveSpeedMultiplier;
+    /** 脅威がなくなってから盾を下ろすまでの時間（tick。最小 2）。 */
+    public final int shieldLowerAfterTicks;
+
     /** 装備の部位（hand, off_hand, helmet, chestplate, leggings, boots）→ アイテム。 */
     public final Map<String, Material> equipment = new LinkedHashMap<>();
 
@@ -89,6 +98,12 @@ public final class Settings {
         attackRange = c.getDouble("combat.attack-range", 3.0);
         attackDelayTicks = Math.max(1, c.getInt("combat.attack-delay-ticks", 12));
         pathfinder = c.getString("combat.pathfinder", "MINECRAFT").toUpperCase(Locale.ROOT);
+
+        shieldEnabled = c.getBoolean("shield.enabled", true);
+        shieldDetectRadius = Math.max(1.0, c.getDouble("shield.detect-radius", 24));
+        shieldMoveSpeedMultiplier = Math.max(0.05, c.getDouble("shield.move-speed-multiplier", 0.3));
+        shieldLowerAfterTicks = Math.max(Shields.TICK_PERIOD,
+                (int) Math.round(c.getDouble("shield.lower-after-seconds", 0.5) * 20));
 
         ConfigurationSection eq = c.getConfigurationSection("equipment");
         if (eq != null) {

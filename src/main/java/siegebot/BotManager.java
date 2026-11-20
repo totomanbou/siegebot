@@ -33,6 +33,7 @@ import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.scoreboard.Team;
 import org.bukkit.util.RayTraceResult;
 
@@ -145,8 +146,12 @@ public final class BotManager {
         for (Map.Entry<String, Material> e : plugin.settings().equipment.entrySet()) {
             Equipment.EquipmentSlot slot = slotOf(e.getKey());
             if (slot != null) {
-                eq.set(slot, new ItemStack(e.getValue()));
+                eq.set(slot, equipmentItem(e.getValue()));
             }
+        }
+        Map<String, Material> equipped = plugin.settings().equipment;
+        if (plugin.settings().shieldEnabled && !equipped.containsKey("off_hand") && !equipped.containsKey("offhand")) {
+            eq.set(Equipment.EquipmentSlot.OFF_HAND, equipmentItem(Material.SHIELD)); // 左手が未指定なら盾を持たせる
         }
         applyNavigatorSettings(npc);
         SoldierBot bot = new SoldierBot(name, side, npc, owner);
@@ -390,6 +395,17 @@ public final class BotManager {
         } catch (IllegalArgumentException e) {
             p.pathfinderType(PathfinderType.CITIZENS);
         }
+    }
+
+    /** 装備のアイテム。盾は壊れないようにする（構えるたびに耐久が減るため）。 */
+    private static ItemStack equipmentItem(Material m) {
+        ItemStack item = new ItemStack(m);
+        if (m == Material.SHIELD) {
+            ItemMeta meta = item.getItemMeta();
+            meta.setUnbreakable(true);
+            item.setItemMeta(meta);
+        }
+        return item;
     }
 
     private static Equipment.EquipmentSlot slotOf(String key) {
@@ -755,7 +771,7 @@ public final class BotManager {
     }
 
     /** 敵: 敵の陣営のプレイヤー・ボットと、敵のチームに入っているモブ。 */
-    private List<LivingEntity> enemies(Side side) {
+    List<LivingEntity> enemies(Side side) {
         List<LivingEntity> r = new ArrayList<>(humans(side.opposite()));
         for (SoldierBot b : of(side.opposite())) {
             if (b.npc.isSpawned() && b.npc.getEntity() instanceof LivingEntity le) {

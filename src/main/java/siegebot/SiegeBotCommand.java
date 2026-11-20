@@ -410,6 +410,7 @@ public final class SiegeBotCommand implements TabExecutor {
             if (b.npc.getEntity() instanceof Player bp) {
                 int c = plugin.combat().secondsLeft(bp); // CombatLog で戦闘中なら残りの秒数
                 sb.append(" combat=").append(c > 0 ? c + "s" : "なし");
+                sb.append(" shield=").append(plugin.shields().describe(b));
             }
             msg(sender, sb.toString());
         }

@@ -14,6 +14,8 @@ public final class SiegeBotPlugin extends JavaPlugin {
     private SiegeData data;
     private BotManager bots;
     private BukkitTask botTask;
+    private BukkitTask shieldTask;
+    private Shields shields;
     private CombatCheck combat;
     private PlayerCommand playerCommand;
 
@@ -24,6 +26,7 @@ public final class SiegeBotPlugin extends JavaPlugin {
         data = new SiegeData(new File(getDataFolder(), "data.yml"), getLogger());
         data.load();
         bots = new BotManager(this);
+        shields = new Shields(this);
         combat = new CombatCheck(getLogger());
 
         Bukkit.getPluginManager().registerEvents(new GameListener(this), this);
@@ -59,6 +62,7 @@ public final class SiegeBotPlugin extends JavaPlugin {
         reloadConfig();
         settings = new Settings(getConfig());
         data.load();
+        shields.lowerAll(); // 構えたままの遅い歩きを、新しい設定の速さに戻してから入れ直す
         startTasks();
         bots.reapplySettings();
         spawnSavedBots();
@@ -69,6 +73,10 @@ public final class SiegeBotPlugin extends JavaPlugin {
             botTask.cancel();
         }
         botTask = Bukkit.getScheduler().runTaskTimer(this, () -> bots.tick(), 40L, BotManager.TICK_PERIOD);
+        if (shieldTask != null) {
+            shieldTask.cancel();
+        }
+        shieldTask = Bukkit.getScheduler().runTaskTimer(this, () -> shields.tick(), 40L, Shields.TICK_PERIOD);
     }
 
     /** /sb spawn で出したボット（持ち主なし）を、陣営のリスポーン地点に出す。 */
@@ -91,6 +99,11 @@ public final class SiegeBotPlugin extends JavaPlugin {
 
     public BotManager bots() {
         return bots;
+    }
+
+    /** 盾の構え方。 */
+    Shields shields() {
+        return shields;
     }
 
     /** /sbc と指揮メニュー（sbc が plugin.yml にないときは null）。 */

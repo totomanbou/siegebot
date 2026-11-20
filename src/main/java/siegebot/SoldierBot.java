@@ -23,6 +23,12 @@ public final class SoldierBot {
     long stuckTick;
     /** 最後にダメージを受けた時刻（サーバーの tick）。自動の回復はこの後 regen-delay-seconds 待つ。 */
     long lastDamagedTick = Long.MIN_VALUE / 2;
+    /** 盾を構えている（遅い歩きと向きの指定を入れている）間は true。{@link Shields} が決める。 */
+    boolean shieldUp;
+    /** 構えている間に向く地点（脅威の位置）。構えていなければ null。 */
+    org.bukkit.Location blockLook;
+    /** 最後に脅威を見つけた時刻（サーバーの tick）。盾はこの後 lower-after-seconds 待って下ろす。 */
+    long lastThreatTick = Long.MIN_VALUE / 2;
 
     SoldierBot(String name, Side side, NPC npc, UUID owner) {
         this.name = name;

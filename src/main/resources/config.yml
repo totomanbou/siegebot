@@ -74,6 +74,17 @@ combat:
   # MINECRAFT 以外では、高い所から飛び降りる経路を見つけられない（試験サーバーで確かめた結果）
   pathfinder: "MINECRAFT"
 
+# 盾（左手）。プレイヤーと同じく、弓・クロスボウで狙われたときと矢が飛んでくるときに構え、
+# 近接で殴っている最中（狙う敵が攻撃の届く距離 + 1 ブロック以内）は構えない。構えている間は遅く歩く
+shield:
+  enabled: true
+  # 狙っている敵・飛んでくる矢に気づく距離（ブロック）
+  detect-radius: 24
+  # 構えている間の移動の速さ（speed に掛ける倍率）
+  move-speed-multiplier: 0.3
+  # 脅威がなくなってから盾を下ろすまでの秒数
+  lower-after-seconds: 0.5
+
 # ボットの装備（アイテムの ID）。不要な部位は行ごと消してください
 equipment:
   hand: IRON_SWORD
