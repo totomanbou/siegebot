@@ -34,6 +34,10 @@ public final class Settings {
     public final int maxFallDistance;
     /** false ならボットは落下のダメージを受けない。 */
     public final boolean fallDamage;
+    /** 自動の回復: 1 回に回復する体力（1.0 でハート半分）。0 なら回復しない。 */
+    public final double regenAmount;
+    /** 自動の回復の間隔（tick）。 */
+    public final int regenIntervalTicks;
     public final float speed;
     /** 狙いを選び直す間隔（tick）。 */
     public final int retargetTicks;
@@ -66,6 +70,9 @@ public final class Settings {
         pathRange = (float) c.getDouble("combat.path-range", 96);
         maxFallDistance = Math.max(0, c.getInt("combat.max-fall-distance", 384));
         fallDamage = c.getBoolean("combat.fall-damage", true);
+        regenAmount = Math.max(0.0, c.getDouble("combat.regen-amount", 1.0));
+        regenIntervalTicks = Math.max(BotManager.TICK_PERIOD,
+                (int) Math.round(c.getDouble("combat.regen-interval-seconds", 2.0) * 20));
         speed = (float) c.getDouble("combat.speed", 1.5);
         damageMultiplier = Math.max(0.0, c.getDouble("combat.damage-multiplier", 1.2));
         defenseMultiplier = Math.max(0.1, c.getDouble("combat.defense-multiplier", 1.2));

@@ -63,6 +63,8 @@ public final class BotManager {
     private final NPCRegistry registry;
     private final Map<String, SoldierBot> bots = new LinkedHashMap<>();
     private long tickCount;
+    /** 最後に自動で回復させた時刻（サーバーの tick）。 */
+    private long lastRegenTick;
 
     public BotManager(SiegeBotPlugin plugin) {
         this.plugin = plugin;
@@ -599,8 +601,18 @@ public final class BotManager {
             syncPersonalBots();
         }
         long now = Bukkit.getCurrentTick();
+        Settings s = plugin.settings();
+        // 自動の回復: regen-interval-seconds ごとに regen-amount ずつ（最大体力を超えない）
+        boolean regen = s.regenAmount > 0 && now - lastRegenTick >= s.regenIntervalTicks;
+        if (regen) {
+            lastRegenTick = now;
+        }
         for (SoldierBot bot : bots.values()) {
             try {
+                if (regen && bot.npc.isSpawned() && bot.npc.getEntity() instanceof LivingEntity le
+                        && !le.isDead() && le.getHealth() < le.getMaxHealth()) {
+                    le.heal(s.regenAmount, org.bukkit.event.entity.EntityRegainHealthEvent.RegainReason.REGEN);
+                }
                 tickBot(bot, now);
             } catch (RuntimeException e) {
                 plugin.getLogger().warning("ボット " + bot.name + " の処理で例外: " + e);
