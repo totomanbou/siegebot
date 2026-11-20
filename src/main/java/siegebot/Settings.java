@@ -21,6 +21,8 @@ public final class Settings {
     public final double holdMaxDistance;
     /** 「呼び寄せる」を続けて使えない時間（tick）。0 なら制限なし。 */
     public final int callCooldownTicks;
+    /** CombatLog で戦闘中のプレイヤーは「呼び寄せる」を使えない。 */
+    public final boolean callBlockedInCombat;
 
     public final double engageRadius;
     public final double pushLeash;
@@ -54,6 +56,7 @@ public final class Settings {
         maxBotsPerPlayer = Math.max(1, Math.min(9, c.getInt("personal-bots.max-per-player", 5)));
         holdMaxDistance = Math.max(4, c.getDouble("orders.hold-max-distance", 48));
         callCooldownTicks = (int) Math.round(Math.max(0, c.getDouble("orders.call-cooldown-seconds", 0)) * 20);
+        callBlockedInCombat = c.getBoolean("orders.call-blocked-in-combat", true);
 
         engageRadius = c.getDouble("combat.engage-radius", 16);
         pushLeash = c.getDouble("combat.push-leash", 24);

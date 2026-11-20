@@ -22,6 +22,9 @@ orders:
   hold-max-distance: 48
   # 「呼び寄せる」（自分の所へ瞬間移動）を続けて使えない秒数。0 なら何度でも使える
   call-cooldown-seconds: 0
+  # true: CombatLog プラグインで戦闘中（プレイヤーを殴った・殴られた後の combat-time 秒）のあいだは「呼び寄せる」を使えない。
+  #       CombatLog が入っていなければ何もしない
+  call-blocked-in-combat: true
 
 combat:
   # 敵に気づく距離（ブロック）

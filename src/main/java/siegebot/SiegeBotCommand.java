@@ -406,6 +406,10 @@ public final class SiegeBotCommand implements TabExecutor {
             sb.append(" target=").append(b.target == null ? "なし" : b.target.getName());
             sb.append(" nav=").append(b.npc.getNavigator().isNavigating());
             sb.append(" order=").append(b.order().describe());
+            if (b.npc.getEntity() instanceof Player bp) {
+                int c = plugin.combat().secondsLeft(bp); // CombatLog で戦闘中なら残りの秒数
+                sb.append(" combat=").append(c > 0 ? c + "s" : "なし");
+            }
             msg(sender, sb.toString());
         }
     }

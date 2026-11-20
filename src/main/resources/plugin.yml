@@ -3,6 +3,7 @@ version: '${project.version}'
 main: siegebot.SiegeBotPlugin
 api-version: '26.1'
 depend: [Citizens]
+softdepend: [CombatLog]
 description: Personal soldier bots for castle siege games, commanded from a menu.
 commands:
   siegebot:

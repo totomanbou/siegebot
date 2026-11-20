@@ -147,6 +147,7 @@ public final class PlayerCommand implements TabExecutor {
     /**
      * 自分の所（足元の地面）へ瞬間移動させる。方針はそのまま（「守れ」のままなら、守る地点へ歩いて戻る）。
      * 倒れているボットは呼べない。orders.call-cooldown-seconds が 0 より大きければ、その間は続けて呼べない。
+     * orders.call-blocked-in-combat が true なら、CombatLog で戦闘中のあいだは呼べない。
      */
     void callToMe(Player p, Side side) {
         int cooldown = plugin.settings().callCooldownTicks;
@@ -156,6 +157,13 @@ public final class PlayerCommand implements TabExecutor {
             long left = (cooldown - (now - last) + 19) / 20;
             tell(p, "呼び寄せはあと " + left + " 秒使えません。", NamedTextColor.RED);
             return;
+        }
+        if (plugin.settings().callBlockedInCombat) {
+            int inCombat = plugin.combat().secondsLeft(p);
+            if (inCombat > 0) {
+                tell(p, "戦闘中は呼び寄せられません（あと " + inCombat + " 秒）。", NamedTextColor.RED);
+                return;
+            }
         }
         org.bukkit.Location to = BotManager.groundBelow(p.getLocation());
         List<SoldierBot> moved = new ArrayList<>();
