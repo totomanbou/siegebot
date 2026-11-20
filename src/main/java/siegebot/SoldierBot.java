@@ -18,6 +18,9 @@ public final class SoldierBot {
     LivingEntity target;
     /** 最後に狙いを選び直した時刻（サーバーの tick）。 */
     long lastRetargetTick;
+    /** 動けなくなったかの見張り: 最後に 1 ブロック以上動いたと確かめた位置と時刻。 */
+    org.bukkit.Location stuckPos;
+    long stuckTick;
 
     SoldierBot(String name, Side side, NPC npc, UUID owner) {
         this.name = name;

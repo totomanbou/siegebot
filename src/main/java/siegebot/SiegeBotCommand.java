@@ -369,6 +369,7 @@ public final class SiegeBotCommand implements TabExecutor {
             msg(sender, "コンソールからは座標を指定してください。");
             return;
         }
+        b.npc.getNavigator().cancelNavigation(); // 移す前の経路を捨てる（残ると古い経路のまま止まる）
         b.npc.getEntity().teleport(to);
         msg(sender, b.name() + " を移しました。");
     }

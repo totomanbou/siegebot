@@ -32,7 +32,16 @@ public final class GameListener implements Listener {
         plugin.bots().removeOwned(event.getPlayer().getUniqueId());
     }
 
-    /** ボットが関わる攻撃で、攻撃した側と受けた側が同じ陣営なら無効にする。 */
+    /** combat.fall-damage が false なら、ボットの落下のダメージを無効にする。 */
+    @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
+    public void onFall(org.bukkit.event.entity.EntityDamageEvent event) {
+        if (event.getCause() == org.bukkit.event.entity.EntityDamageEvent.DamageCause.FALL
+                && !plugin.settings().fallDamage && plugin.bots().byEntity(event.getEntity()) != null) {
+            event.setCancelled(true);
+        }
+    }
+
+    /** ボットが関わる攻撃で、攻撃した側と受けた側が同じ陣営なら無効にする。そうでなければ火力・防御力の倍率を掛ける。 */
     @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
     public void onDamage(EntityDamageByEntityEvent event) {
         Entity attacker = event.getDamager();

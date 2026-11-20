@@ -36,6 +36,10 @@ combat:
   arrive-radius: 3
   # 経路を探す最大の距離（ブロック）。持ち場がこれより離れていると歩いていけません
   path-range: 96
+  # 飛び降りてよい高さ（ブロック）。既定の 384 はワールドの高さ全部なので、どれだけ高い所からでも飛び降りる
+  max-fall-distance: 384
+  # false にするとボットは落下のダメージを受けない（true ならプレイヤーと同じく、高すぎると落ちて倒れる）
+  fall-damage: true
   # 移動の速さの倍率。平らな地面で測った値: 1.0 で毎秒約 3.9 ブロック（歩きより少し遅い）、
   # 1.5 で毎秒約 5.6 ブロック（プレイヤーのダッシュと同じくらい）、
   # 1.95 で毎秒約 7.2 ブロック（プレイヤーのダッシュジャンプと同じくらい）
@@ -51,8 +55,9 @@ combat:
   attack-range: 3.0
   # 攻撃の間隔（tick。20 で 1 秒）
   attack-delay-ticks: 12
-  # 経路探索の方式: CITIZENS / CITIZENS_ASYNC / MINECRAFT
-  pathfinder: "CITIZENS"
+  # 経路探索の方式: MINECRAFT / CITIZENS / CITIZENS_ASYNC
+  # MINECRAFT 以外では、高い所から飛び降りる経路を見つけられない（試験サーバーで確かめた結果）
+  pathfinder: "MINECRAFT"
 
 # ボットの装備（アイテムの ID）。不要な部位は行ごと消してください
 equipment:

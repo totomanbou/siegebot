@@ -28,6 +28,10 @@ public final class Settings {
     public final double followDistance;
     public final double arriveRadius;
     public final float pathRange;
+    /** 経路探索で飛び降りてよい高さ（ブロック）。 */
+    public final int maxFallDistance;
+    /** false ならボットは落下のダメージを受けない。 */
+    public final boolean fallDamage;
     public final float speed;
     /** 狙いを選び直す間隔（tick）。 */
     public final int retargetTicks;
@@ -57,6 +61,8 @@ public final class Settings {
         followDistance = c.getDouble("combat.follow-distance", 4);
         arriveRadius = c.getDouble("combat.arrive-radius", 3);
         pathRange = (float) c.getDouble("combat.path-range", 96);
+        maxFallDistance = Math.max(0, c.getInt("combat.max-fall-distance", 384));
+        fallDamage = c.getBoolean("combat.fall-damage", true);
         speed = (float) c.getDouble("combat.speed", 1.5);
         damageMultiplier = Math.max(0.0, c.getDouble("combat.damage-multiplier", 1.2));
         defenseMultiplier = Math.max(0.1, c.getDouble("combat.defense-multiplier", 1.2));
@@ -64,7 +70,7 @@ public final class Settings {
                 (int) Math.round(c.getDouble("combat.retarget-seconds", 2.0) * 20));
         attackRange = c.getDouble("combat.attack-range", 3.0);
         attackDelayTicks = Math.max(1, c.getInt("combat.attack-delay-ticks", 12));
-        pathfinder = c.getString("combat.pathfinder", "CITIZENS").toUpperCase(Locale.ROOT);
+        pathfinder = c.getString("combat.pathfinder", "MINECRAFT").toUpperCase(Locale.ROOT);
 
         ConfigurationSection eq = c.getConfigurationSection("equipment");
         if (eq != null) {

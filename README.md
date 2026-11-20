@@ -10,8 +10,8 @@
 
 ## 導入
 
-1. [Releases](../../releases) から `SiegeBot-0.4.0.jar` を取ってくるか、自分でビルドします（下の「ビルド」）。
-2. サーバーの `plugins` フォルダに、Citizens の jar と `SiegeBot-0.4.0.jar` を入れて起動します。
+1. [Releases](../../releases) から `SiegeBot-0.4.1.jar` を取ってくるか、自分でビルドします（下の「ビルド」）。
+2. サーバーの `plugins` フォルダに、Citizens の jar と `SiegeBot-0.4.1.jar` を入れて起動します。
    指揮棒を使うなら、ItemJoin の jar も入れ、[`itemjoin/items.yml`](itemjoin/items.yml) を `plugins/ItemJoin/items.yml` に置きます。
 3. `plugins/SiegeBot/config.yml` の `teams.attack` / `teams.defend` を、攻め・守りのスコアボードのチーム名（`/team` で作ったチームの名前）に合わせ、`/sb reload` で読み直します。
    既定は `Attack` と `Defence` です。SiegeBot は大文字・小文字を区別せずに比べますが、コマンドのセレクタ（`@a[team=Attack]`）は区別するので、チーム名はそろえておくのが安全です。
@@ -111,7 +111,10 @@ ItemJoin を入れると、参加時とリスポーン時に「指揮棒」が�
 ## 知っておくこと
 
 - **歩ける距離**: 持ち場が `combat.path-range`（既定 96 ブロック）より遠いと、経路が見つからず歩けません。
-- **詰まったとき**: 瞬間移動はさせていません。その場で経路を取り直します。動けないときは `/sb tp` で救出してください。
+- **飛び降り**: 高さを気にせず飛び降ります（`combat.max-fall-distance`、既定 384 ブロック = ワールドの高さ全部）。
+  落下のダメージはプレイヤーと同じく受けるので、高すぎると落ちて倒れます。受けないようにするなら `combat.fall-damage: false` にしてください。
+  飛び降りの経路は `combat.pathfinder: MINECRAFT`（0.4.1 からの既定）でしか見つかりません。CITIZENS 系にすると高い所で止まります。
+- **詰まったとき**: 瞬間移動はさせていません。経路があるのに 3 秒動かなければ、その場で経路を取り直します。動けないときは `/sb tp` で救出してください。
 - **追従の相手**: 持ち主が倒れている間や、敵の陣営に移ったときは、その場で近くの敵と戦います。
 - **狙いの選び直し**: 一度狙った敵でも、2 秒ごと（`combat.retarget-seconds`）に周りを見直し、今の相手より 2 ブロック以上近い敵がいれば狙いを替えます。
 - **敵**: 敵の陣営のプレイヤーとボットに加え、敵のチームに入っているモブ（`/team join Defence @e[type=zombie]` などで入れたもの）も敵として狙います。
@@ -133,6 +136,11 @@ ItemJoin を入れると、参加時とリスポーン時に「指揮棒」が�
 - **Citizens の初回起動**: Citizens は最初の起動のときに、必要なライブラリを外部（Maven Central）からダウンロードします。
 - **まだできないこと**: 弓などの遠距離攻撃、ブロックの設置・破壊。
 
+## 0.4.0 以前から上げるとき
+
+すでにある `plugins/SiegeBot/config.yml` は書き換わりません。高い所から飛び降りるようにするには、
+`combat.pathfinder` を `"MINECRAFT"` に書き換えて `/sb reload` してください（`max-fall-distance`・`fall-damage` は書かなくても既定値が使われます）。
+
 ## 0.1 からの変更
 
 0.2 で、前線・門の判定・場所の登録・チャットでの指示（キーワード判定と Claude API）をなくしました。
@@ -148,7 +156,7 @@ Java 25 と Maven 3.9 以降が必要です。
 mvn package
 ```
 
-`target/SiegeBot-0.4.0.jar` ができます（単体テストも走ります）。
+`target/SiegeBot-0.4.1.jar` ができます（単体テストも走ります）。
 Windows では `build.cmd package` でも同じです（`tools/apache-maven-*` に Maven を置けばそれを、なければ PATH の `mvn` を使います）。
 
 ## リポジトリの中身

@@ -50,6 +50,8 @@ import org.bukkit.util.RayTraceResult;
 public final class BotManager {
 
     public static final int TICK_PERIOD = 10;
+    /** 経路があるのにこの tick 数のあいだ動かなければ、経路を取り直す。 */
+    static final int STUCK_TICKS = 60;
     /** 見えていなくても気づく距離。 */
     private static final double SENSE_RADIUS = 5.0;
     /** この距離の敵には、持ち場からの距離（leash）に関係なく応戦する。 */
@@ -358,6 +360,8 @@ public final class BotManager {
         Settings s = plugin.settings();
         NavigatorParameters p = npc.getNavigator().getDefaultParameters();
         p.range(s.pathRange);
+        // 落ちてよい高さ。Citizens は既定（-1）だと高い所から降りる経路を探さない
+        p.fallDistance(s.maxFallDistance);
         p.speedModifier(s.speed);
         p.attackRange(s.attackRange);
         p.attackDelayTicks(s.attackDelayTicks);
@@ -634,6 +638,17 @@ public final class BotManager {
                 nav.cancelNavigation();
             }
             return;
+        }
+        // 経路があるのに STUCK_TICKS の間 1 ブロックも動いていなければ、経路を取り直す（古い経路のまま止まるのを防ぐ）
+        Location here = self.getLocation();
+        if (!nav.isNavigating() || bot.stuckPos == null || bot.stuckPos.getWorld() != here.getWorld()
+                || bot.stuckPos.distanceSquared(here) > 1.0) {
+            bot.stuckPos = here;
+            bot.stuckTick = now;
+        } else if (now - bot.stuckTick >= STUCK_TICKS) {
+            nav.cancelNavigation();
+            bot.stuckPos = here;
+            bot.stuckTick = now;
         }
         Location dest = nav.isNavigating() ? nav.getTargetAsLocation() : null;
         if (dest == null || dest.getWorld() != anchor.getWorld() || dest.distanceSquared(anchor) > 4.0) {
