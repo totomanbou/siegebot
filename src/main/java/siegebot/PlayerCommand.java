@@ -24,6 +24,7 @@ import org.bukkit.entity.Player;
  *   <li>/sbc follow               … 自分についてこさせる</li>
  *   <li>/sbc hold                 … 自分の視点の先（見ているブロックの所）を守らせる</li>
  *   <li>/sbc call                 … 自分の所へ瞬間移動させる（方針はそのまま）</li>
+ *   <li>/sbc retreat              … 戦闘をやめさせ、持ち場（ついてこいなら自分）へ戻らせる</li>
  *   <li>/sbc stance [push|guard]  … 構えを変える（引数なしなら切り替え）。動きはそのまま</li>
  *   <li>/sbc target               … 指示する相手を切り替える（全員 → 1 体ずつ → 全員）</li>
  *   <li>/sbc status               … ボットの方針の一覧</li>
@@ -31,7 +32,8 @@ import org.bukkit.entity.Player;
  */
 public final class PlayerCommand implements TabExecutor {
 
-    private static final List<String> SUBS = List.of("menu", "follow", "hold", "call", "stance", "target", "status");
+    private static final List<String> SUBS = List.of("menu", "follow", "hold", "call", "retreat", "stance", "target",
+            "status");
 
     private final SiegeBotPlugin plugin;
     private final CommandMenu menu;
@@ -72,6 +74,7 @@ public final class PlayerCommand implements TabExecutor {
             case "follow" -> follow(p, side);
             case "hold" -> holdLookPoint(p, side);
             case "call" -> callToMe(p, side);
+            case "retreat" -> retreat(p, side);
             case "stance" -> {
                 if (args.length >= 2 && args[1].equalsIgnoreCase("push")) {
                     setStance(p, side, Order.Stance.PUSH);
@@ -186,6 +189,11 @@ public final class PlayerCommand implements TabExecutor {
             plugin.bots().say(moved.get(0), moved.size() == 1 ? "到着した" : moved.size() + " 体到着した");
             lastCall.put(p.getUniqueId(), now);
         }
+    }
+
+    /** 戦闘をやめさせ、持ち場（ついてこいなら自分）へ戻らせる。着いたら元の動きに戻る。方針・構えは変えない。 */
+    void retreat(Player p, Side side) {
+        plugin.bots().retreat(targets(p, side));
     }
 
     /** 視点の先（見ているブロックの、見ている面の手前）を守らせる。構えは今のまま。 */

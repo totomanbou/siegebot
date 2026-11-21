@@ -75,8 +75,8 @@ final class Shields {
             }
             return;
         }
-        if (!s.shieldEnabled || !hasShield(p)) {
-            lower(bot, p, s);
+        if (!s.shieldEnabled || !hasShield(p) || bot.retreating(now)) {
+            lower(bot, p, s); // 退却中は構えない（戦わずに戻る）
             return;
         }
         boolean busy = p.hasCooldown(Material.SHIELD) || meleeBusy(bot, p, s);

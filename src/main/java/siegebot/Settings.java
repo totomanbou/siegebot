@@ -23,6 +23,8 @@ public final class Settings {
     public final int callCooldownTicks;
     /** CombatLog で戦闘中のプレイヤーは「呼び寄せる」を使えない。 */
     public final boolean callBlockedInCombat;
+    /** 「退却」で戻る途中、この時間（tick）たっても着かなければ退却をやめる。 */
+    public final int retreatTimeoutTicks;
 
     /** true: ボットの頭の上の名前を同じ陣営のプレイヤーにだけ見せる。false: 全員に見せる（Citizens の表示）。 */
     public final boolean nameTagTeamOnly;
@@ -77,6 +79,7 @@ public final class Settings {
         holdMaxDistance = Math.max(4, c.getDouble("orders.hold-max-distance", 48));
         callCooldownTicks = (int) Math.round(Math.max(0, c.getDouble("orders.call-cooldown-seconds", 0)) * 20);
         callBlockedInCombat = c.getBoolean("orders.call-blocked-in-combat", true);
+        retreatTimeoutTicks = (int) Math.round(Math.max(1, c.getDouble("orders.retreat-timeout-seconds", 20)) * 20);
 
         nameTagTeamOnly = !"all".equalsIgnoreCase(c.getString("name-tag.visible-to", "team"));
 

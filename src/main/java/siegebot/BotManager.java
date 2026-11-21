@@ -46,6 +46,7 @@ import org.bukkit.util.RayTraceResult;
  *   <li>持ち場の周りにいる敵のうち、見えている最も近い敵を狙う（{@link #pickTarget}）。</li>
  *   <li>敵がいなければ持ち場へ歩く。</li>
  * </ol>
+ * 「退却」中（{@link SoldierBot#retreating}）は 2 を飛ばして、戦わずに持ち場へ戻る（{@link #retreat}）。
  * メインスレッドからだけ呼ぶ。
  */
 public final class BotManager {
@@ -345,7 +346,7 @@ public final class BotManager {
     /** 持ち主の専用のボットの方針を、出したときと同じ「持ち主についていく・持ち場優先」に戻す。 */
     public void resetOrders(Player owner) {
         for (SoldierBot b : ownedBy(owner.getUniqueId())) {
-            b.order = Order.follow(owner.getName(), Order.Stance.GUARD);
+            setOrder(b, Order.follow(owner.getName(), Order.Stance.GUARD)); // 退却も終わる
             b.target = null;
         }
     }
@@ -422,8 +423,37 @@ public final class BotManager {
 
     // ---- 方針 ----
 
+    /** 方針を変える。方針の変更は必ずここを通す（新しい指示を受けたら退却をやめるため）。 */
     public void setOrder(SoldierBot bot, Order order) {
         bot.order = order;
+        bot.retreatUntilTick = 0;
+    }
+
+    /**
+     * 退却させる: 今の狙いを捨て、盾を下ろし、持ち場（追従なら持ち主）へ戻らせる。戻るまでは戦わない。
+     * 着く・持ち場が決められない・orders.retreat-timeout-seconds 過ぎる・新しい方針を受ける・持ち主が倒れる、で終わる。
+     * 倒れているボットは対象にしない。最初のボットに復唱させる。
+     */
+    public void retreat(List<SoldierBot> targets) {
+        long now = Bukkit.getCurrentTick();
+        int count = 0;
+        SoldierBot voice = null;
+        for (SoldierBot b : targets) {
+            if (!b.npc.isSpawned()) {
+                continue;
+            }
+            b.retreatUntilTick = now + plugin.settings().retreatTimeoutTicks;
+            b.target = null;
+            Navigator nav = b.npc.getNavigator();
+            if (nav.getEntityTarget() != null) {
+                nav.cancelNavigation();
+            }
+            voice = voice == null ? b : voice;
+            count++;
+        }
+        if (voice != null) {
+            say(voice, count == 1 ? "了解。退却する" : "了解。" + count + " 体退却する");
+        }
     }
 
     /**
@@ -658,6 +688,7 @@ public final class BotManager {
         NPC npc = bot.npc;
         if (!npc.isSpawned()) {
             bot.target = null;
+            bot.retreatUntilTick = 0; // 倒れたら退却も終わる
             return; // 倒れたボットは自動では復活しない（/sb revive で出し直す）
         }
         if (!(npc.getEntity() instanceof LivingEntity self)) {
@@ -669,6 +700,23 @@ public final class BotManager {
             anchor = null;
         }
         Navigator nav = npc.getNavigator();
+
+        // 退却中: 持ち場が決められない・着いたら終わり（期限が過ぎれば retreating が false になる）。続くなら戦わずに戻る
+        if (bot.retreating(now)) {
+            if (anchor == null) {
+                bot.retreatUntilTick = 0;
+            } else if (arrived(bot, self, anchor, s)) {
+                bot.retreatUntilTick = 0;
+                say(bot, "戻った");
+            } else {
+                bot.target = null;
+                if (nav.getEntityTarget() != null) {
+                    nav.cancelNavigation();
+                }
+                walkTo(bot, nav, self, anchor, now);
+                return;
+            }
+        }
 
         LivingEntity target = pickTarget(bot, self, anchor, now);
         bot.target = target;
@@ -685,14 +733,23 @@ public final class BotManager {
         if (anchor == null) {
             return;
         }
-        boolean following = bot.order.mode() == Order.Mode.FOLLOW;
-        double arrive = following ? s.followDistance : s.arriveRadius;
-        if (self.getLocation().distanceSquared(anchor) <= arrive * arrive) {
-            if (nav.isNavigating() && following) {
+        if (arrived(bot, self, anchor, s)) {
+            if (nav.isNavigating() && bot.order.mode() == Order.Mode.FOLLOW) {
                 nav.cancelNavigation();
             }
             return;
         }
+        walkTo(bot, nav, self, anchor, now);
+    }
+
+    /** 持ち場に着いたか（追従なら follow-distance 以内、地点を守るなら arrive-radius 以内）。 */
+    private static boolean arrived(SoldierBot bot, LivingEntity self, Location anchor, Settings s) {
+        double arrive = bot.order.mode() == Order.Mode.FOLLOW ? s.followDistance : s.arriveRadius;
+        return self.getLocation().distanceSquared(anchor) <= arrive * arrive;
+    }
+
+    /** 持ち場へ歩かせる。動けなくなっていれば経路を取り直し、目的地が変わったときだけ経路を引き直す。 */
+    private void walkTo(SoldierBot bot, Navigator nav, LivingEntity self, Location anchor, long now) {
         // 経路があるのに STUCK_TICKS の間 1 ブロックも動いていなければ、経路を取り直す（古い経路のまま止まるのを防ぐ）
         Location here = self.getLocation();
         if (!nav.isNavigating() || bot.stuckPos == null || bot.stuckPos.getWorld() != here.getWorld()

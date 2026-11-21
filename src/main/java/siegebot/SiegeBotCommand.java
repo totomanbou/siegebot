@@ -277,7 +277,8 @@ public final class SiegeBotCommand implements TabExecutor {
     // ---- 方針の直接設定 ----
 
     private void set(CommandSender sender, String[] args) {
-        String usage = "使い方: /sb set <ボット|*> follow <プレイヤー> [push|guard] | hold [push|guard] | stance <push|guard>";
+        String usage = "使い方: /sb set <ボット|*> follow <プレイヤー> [push|guard] | hold [push|guard] | stance <push|guard>"
+                + " | retreat";
         if (args.length < 3) {
             msg(sender, usage);
             return;
@@ -292,6 +293,12 @@ public final class SiegeBotCommand implements TabExecutor {
             return;
         }
         String mode = args[2].toLowerCase(Locale.ROOT);
+        if (mode.equals("retreat")) {
+            // 退却は方針ではない（着いたら元の方針に戻る）ので、方針の書き換えとは別に扱う
+            plugin.bots().retreat(targets);
+            msg(sender, targets.size() + " 体に退却を指示しました（倒れているボットは除く）。");
+            return;
+        }
         Map<SoldierBot, Order> orders = new LinkedHashMap<>();
         switch (mode) {
             case "follow" -> {
@@ -415,6 +422,8 @@ public final class SiegeBotCommand implements TabExecutor {
             sb.append(" target=").append(b.target == null ? "なし" : b.target.getName());
             sb.append(" nav=").append(b.npc.getNavigator().isNavigating());
             sb.append(" order=").append(b.order().describe());
+            long nowTick = org.bukkit.Bukkit.getCurrentTick();
+            sb.append(" retreat=").append(b.retreating(nowTick) ? (b.retreatUntilTick - nowTick + 19) / 20 + "s" : "なし");
             if (b.npc.getEntity() instanceof Player bp) {
                 int c = plugin.combat().secondsLeft(bp); // CombatLog で戦闘中なら残りの秒数
                 sb.append(" combat=").append(c > 0 ? c + "s" : "なし");
@@ -475,7 +484,7 @@ public final class SiegeBotCommand implements TabExecutor {
             return botNames(true);
         }
         if (n == 3) {
-            return List.of("follow", "hold", "stance");
+            return List.of("follow", "hold", "stance", "retreat");
         }
         String mode = args[2].toLowerCase(Locale.ROOT);
         if (mode.equals("follow")) {

@@ -25,7 +25,7 @@ import org.bukkit.inventory.meta.ItemMeta;
  *
  * <pre>
  * 1 段目: 指示する相手の選択（全員・1 体ずつ）。自分のボットが 1 体だけなら、その状態の表示
- * 2 段目: ついてこい・呼び寄せる・視点の先を守れ      … 押すと指示して画面を閉じる
+ * 2 段目: ついてこい・呼び寄せる・視点の先を守れ・退却 … 押すと指示して画面を閉じる
  * 3 段目: 構え（積極的・持ち場優先）・閉じる          … 構えは押すと変えて、画面はそのまま
  * </pre>
  * 今の動き・構えのボタンは光る。
@@ -94,14 +94,17 @@ public final class CommandMenu implements Listener {
         // ---- 2 段目: 動き ----
         List<SoldierBot> targets = commands.targets(p, side);
         Order.Mode mode = commonMode(targets);
-        put(h, 11, button(Material.LEAD, "ついてこい", NamedTextColor.GREEN, mode == Order.Mode.FOLLOW,
+        put(h, 10, button(Material.LEAD, "ついてこい", NamedTextColor.GREEN, mode == Order.Mode.FOLLOW,
                 List.of(who + "を自分についてこさせる")), () -> act(p, () -> commands.follow(p, side)));
-        put(h, 13, button(Material.ENDER_PEARL, "呼び寄せる", NamedTextColor.LIGHT_PURPLE, false,
+        put(h, 12, button(Material.ENDER_PEARL, "呼び寄せる", NamedTextColor.LIGHT_PURPLE, false,
                 List.of(who + "を自分の所へ瞬間移動させる", "動き（追従・守る地点）は変えない")),
                 () -> act(p, () -> commands.callToMe(p, side)));
-        put(h, 15, button(Material.SPYGLASS, "視点の先を守れ", NamedTextColor.YELLOW, mode == Order.Mode.HOLD,
+        put(h, 14, button(Material.SPYGLASS, "視点の先を守れ", NamedTextColor.YELLOW, mode == Order.Mode.HOLD,
                 List.of(who + "に、メニューを開いたときに", "見ていたブロックの所を守らせる")),
                 () -> act(p, () -> commands.holdLookPoint(p, side)));
+        put(h, 16, button(Material.WHITE_BANNER, "退却", NamedTextColor.RED, allRetreating(targets),
+                List.of(who + "に戦闘をやめさせ、", "持ち場（ついてこいなら自分）へ戻らせる", "着いたら元の動きに戻る")),
+                () -> act(p, () -> commands.retreat(p, side)));
 
         // ---- 3 段目: 構え・閉じる ----
         Order.Stance common = commonStance(targets);
@@ -123,6 +126,17 @@ public final class CommandMenu implements Listener {
     private void act(Player p, Runnable action) {
         p.closeInventory();
         action.run();
+    }
+
+    /** 相手が 1 体以上いて、全員が今退却中か。 */
+    private static boolean allRetreating(List<SoldierBot> bots) {
+        long now = Bukkit.getCurrentTick();
+        for (SoldierBot b : bots) {
+            if (!b.retreating(now)) {
+                return false;
+            }
+        }
+        return !bots.isEmpty();
     }
 
     /** 全員が同じ動きならその動き、ばらばらなら null。 */

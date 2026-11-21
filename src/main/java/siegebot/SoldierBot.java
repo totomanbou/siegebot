@@ -32,6 +32,12 @@ public final class SoldierBot {
     /** 最後に脅威を見つけた時刻（サーバーの tick）。盾はこの後 lower-after-seconds 待って下ろす。 */
     long lastThreatTick = Long.MIN_VALUE / 2;
 
+    /**
+     * 「退却」を続ける期限（サーバーの tick。この tick 未満の間だけ退却中）。0 なら退却していない。
+     * サーバーの tick は 0 より大きいので、0 を「なし」の印にしてよい。
+     */
+    long retreatUntilTick;
+
     SoldierBot(String name, Side side, NPC npc, UUID owner) {
         this.name = name;
         this.side = side;
@@ -53,6 +59,11 @@ public final class SoldierBot {
 
     public Order order() {
         return order;
+    }
+
+    /** 今 tick の時点で退却中か（期限 {@link #retreatUntilTick} の前か）。 */
+    public boolean retreating(long now) {
+        return now < retreatUntilTick;
     }
 
     public boolean alive() {
