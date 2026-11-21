@@ -70,7 +70,7 @@ public final class SiegeBotCommand implements TabExecutor {
 
     private void help(CommandSender sender) {
         msg(sender, "コマンド一覧:");
-        msg(sender, "/sb revive <プレイヤー|@p|@a|bots|all> [数] - ボットを出す・蘇生する（コマンドブロック用。数は 1 人あたりの体数）");
+        msg(sender, "/sb revive <プレイヤー|@p|@a|bots|all> [数] - ボットを参戦させる（倒れていれば戻し、足りなければ出す。コマンドブロック用。数は 1 人あたりの体数）");
         msg(sender, "/sb spawn <名前> <attack|defend> - 持ち主のいないボットを出す（出した地点を守る）");
         msg(sender, "/sb remove <名前> - ボットを消す");
         msg(sender, "/sb list - ボットの一覧");
@@ -177,7 +177,7 @@ public final class SiegeBotCommand implements TabExecutor {
             }
         }
         if (spawned + revived + alive > 0) {
-            parts.add("出した " + spawned + "体・蘇生 " + revived + "体・もともと生存 " + alive + "体");
+            parts.add("参戦 " + (spawned + revived) + "体（新しく " + spawned + "・倒れていた " + revived + "）・もともと参戦中 " + alive + "体");
         }
         for (Map.Entry<BotManager.ReviveReport.Status, List<String>> e : failed.entrySet()) {
             String label = switch (e.getKey()) {
@@ -198,7 +198,7 @@ public final class SiegeBotCommand implements TabExecutor {
         }
 
         if (all || arg.equalsIgnoreCase("bots")) {
-            parts.add("持ち主のいないボットを蘇生 " + adminRevived + "体");
+            parts.add("持ち主のいないボットが参戦 " + adminRevived + "体");
         }
         msg(sender, parts.isEmpty() ? "対象のプレイヤーがいません。" : String.join(" / ", parts));
     }

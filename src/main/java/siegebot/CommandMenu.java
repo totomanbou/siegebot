@@ -68,7 +68,7 @@ public final class CommandMenu implements Listener {
             SoldierBot own = choices.isEmpty() ? null : choices.get(0);
             who = own == null ? "自分のボット" : own.name();
             List<String> lore = own == null ? List.of("まだ出ていない")
-                    : List.of("今: " + own.order().describe(), own.alive() ? "生存" : "倒れている（コマンドブロックで蘇生）");
+                    : List.of("今: " + own.order().describe(), own.alive() ? "生存" : "倒れている（コマンドブロックで参戦）");
             put(h, 4, button(Material.PLAYER_HEAD, who, NamedTextColor.AQUA, false, lore), () -> open(p, side));
         } else {
             List<SoldierBot> mine = choices;
@@ -80,7 +80,7 @@ public final class CommandMenu implements Listener {
                     });
             for (int i = 0; i < mine.size() && i < 8; i++) {
                 SoldierBot b = mine.get(i);
-                List<String> lore = List.of("今: " + b.order().describe(), b.alive() ? "生存" : "倒れている（コマンドブロックで蘇生）",
+                List<String> lore = List.of("今: " + b.order().describe(), b.alive() ? "生存" : "倒れている（コマンドブロックで参戦）",
                         "押すとこのボットだけに指示する");
                 put(h, 1 + i, button(Material.PLAYER_HEAD, b.name() + " に指示", NamedTextColor.AQUA,
                         b.name().equals(sel), lore), () -> {

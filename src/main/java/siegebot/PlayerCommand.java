@@ -181,8 +181,9 @@ public final class PlayerCommand implements TabExecutor {
             b.npc.getEntity().teleport(to, io.papermc.paper.entity.TeleportFlag.EntityState.RETAIN_PASSENGERS);
             moved.add(b);
         }
-        if (!down.isEmpty()) {
-            tell(p, String.join("・", down) + " は倒れているので呼べません（コマンドブロックで蘇生してください）。",
+        // 1 体でも呼べたなら、倒れているボットのことは言わない（全員倒れているときだけ知らせる）
+        if (moved.isEmpty() && !down.isEmpty()) {
+            tell(p, String.join("・", down) + " は倒れているので呼べません（コマンドブロックで参戦させてください）。",
                     NamedTextColor.RED);
         }
         if (!moved.isEmpty()) {

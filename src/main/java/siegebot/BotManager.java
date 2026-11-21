@@ -308,14 +308,8 @@ public final class BotManager {
             voice = voice == null ? b : voice;
         }
         if (voice != null) {
-            List<String> parts = new ArrayList<>();
-            if (spawned > 0) {
-                parts.add(spawned + " 体参戦");
-            }
-            if (revived > 0) {
-                parts.add(revived + " 体復活");
-            }
-            say(voice, p.getName() + " の兵、" + String.join("・", parts) + "した");
+            // 新しく出したのも倒れていたのも、どちらも「参戦」と言う
+            say(voice, p.getName() + " の兵、" + (spawned + revived) + " 体参戦した");
         }
         if (spawned + revived + alive == 0) {
             return ReviveReport.of(ReviveReport.Status.NO_PLACE);
@@ -338,7 +332,7 @@ public final class BotManager {
         }
         bot.target = null;
         if (announce) {
-            say(bot, "復活した");
+            say(bot, "参戦した");
         }
         return true;
     }
