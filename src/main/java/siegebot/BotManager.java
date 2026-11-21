@@ -700,8 +700,7 @@ public final class BotManager {
             if (anchor == null) {
                 bot.retreatUntilTick = 0;
             } else if (arrived(bot, self, anchor, s)) {
-                bot.retreatUntilTick = 0;
-                say(bot, "戻った");
+                bot.retreatUntilTick = 0; // 着いても知らせない
             } else {
                 bot.target = null;
                 if (nav.getEntityTarget() != null) {
