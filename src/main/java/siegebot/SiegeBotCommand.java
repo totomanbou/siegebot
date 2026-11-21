@@ -161,6 +161,11 @@ public final class SiegeBotCommand implements TabExecutor {
         }
 
         List<String> parts = new ArrayList<>();
+        if (count != null && arg.equalsIgnoreCase("bots")) {
+            // bots は /sb spawn で出した持ち主のいないボットだけ。数は専用のボットの体数なので使わない
+            parts.add("bots は持ち主のいないボット（/sb spawn）を戻すだけで、数は使いません。"
+                    + "自分のボットを " + count + " 体にするなら /sb revive @s " + count);
+        }
         int spawned = 0;
         int revived = 0;
         int alive = 0;
@@ -462,7 +467,9 @@ public final class SiegeBotCommand implements TabExecutor {
             case "" -> SUBS;
             case "spawn" -> n == 3 ? SIDES : List.of();
             case "remove", "tp" -> n == 2 ? botNames(false) : List.of();
-            case "revive" -> n == 2 ? reviveTargets() : n == 3 ? List.of("1", "2", "3") : List.of();
+            // bots は数を使わないので、数の候補は出さない
+            case "revive" -> n == 2 ? reviveTargets()
+                    : n == 3 && !args[1].equalsIgnoreCase("bots") ? List.of("1", "2", "3") : List.of();
             case "protect" -> n == 2 ? botNames(false) : n == 3 ? List.of("on", "off") : List.of();
             case "spawnpoint" -> n == 2 ? SIDES : n == 3 ? List.of("clear") : List.of();
             case "set" -> completeSet(args);
