@@ -1,8 +1,7 @@
 # --{ SiegeBot 用の ItemJoin のアイテム（ItemJoin 6.1.8 で確認）}--
-# plugins/ItemJoin/items.yml をこのファイルで置き換えるか、items: の下の siegebot-baton と siegebot-units を既存の items.yml に足してください。
+# plugins/ItemJoin/items.yml をこのファイルで置き換えるか、items: の下の siegebot-baton を既存の items.yml に足してください。
 # 指揮棒を右クリックすると、SiegeBot の指揮メニュー（/sbc menu）が開きます。自分のチームのボットにだけ効きます。
-# 兵科選択を右クリックすると、兵科選択の画面（/sbc units）が開き、剣兵・槍兵・弓兵から選んで兵を 1 体ずつ呼べます。
-# 呼べる回数は、コマンドブロックの /sb picks で決めます（例: sb picks @a[team=Attack] 3）。
+# 兵科選択のアイテムは ItemJoin ではなく SiegeBot が配ります（/sb picks で呼べる回数を決めると配られ、使い切ると消える）。
 # 置き場所（slot）は 0〜8 がホットバーです。攻城戦の武器と重ならない番号に変えてください。
 
 # 書き換えると ItemJoin がこのファイルを作り直すので、変えないこと。
@@ -22,19 +21,6 @@ items:
       - '&7右クリック: &f指揮メニューを開く'
     interact-right:
       - 'player: sbc menu'
-    commands-cooldown: 1
-    itemflags: inventory-modify, self-drops, death-drops, hide-flags
-    triggers: join, respawn, world-switch
-    enabled-worlds: ALL
-  siegebot-units:
-    id: PAPER
-    slot: 7
-    name: '&b兵科選択'
-    lore:
-      - '&7右クリック: &f兵科を選んで兵を呼ぶ'
-      - '&7呼べる回数はコマンドブロックで決まる'
-    interact-right:
-      - 'player: sbc units'
     commands-cooldown: 1
     itemflags: inventory-modify, self-drops, death-drops, hide-flags
     triggers: join, respawn, world-switch

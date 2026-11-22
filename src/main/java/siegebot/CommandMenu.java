@@ -251,7 +251,7 @@ public final class CommandMenu implements Listener {
                 p.sendMessage(Component.text("[SiegeBot] ", NamedTextColor.GOLD)
                         .append(Component.text(text, ok ? NamedTextColor.GREEN : NamedTextColor.RED)));
                 Side now = plugin.bots().sideOf(p);
-                if (now != null) {
+                if (now != null && plugin.bots().picks(p.getUniqueId()) > 0) {
                     openUnits(p, now);
                 } else {
                     p.closeInventory();

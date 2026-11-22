@@ -13,7 +13,7 @@
 
 1. [Releases](../../releases) から `SiegeBot-0.7.0.jar` を取ってくるか、自分でビルドします（下の「ビルド」）。
 2. サーバーの `plugins` フォルダに、Citizens の jar と `SiegeBot-0.7.0.jar` を入れて起動します。
-   指揮棒と兵科選択を使うなら、ItemJoin の jar も入れ、[`itemjoin/items.yml`](itemjoin/items.yml) を `plugins/ItemJoin/items.yml` に置きます。
+   指揮棒を使うなら、ItemJoin の jar も入れ、[`itemjoin/items.yml`](itemjoin/items.yml) を `plugins/ItemJoin/items.yml` に置きます。
 3. `plugins/SiegeBot/config.yml` の `teams.attack` / `teams.defend` を、攻め・守りのスコアボードのチーム名（`/team` で作ったチームの名前）に合わせ、`/sb reload` で読み直します。
    既定は `Attack` と `Defence` です。SiegeBot は大文字・小文字を区別せずに比べますが、コマンドのセレクタ（`@a[team=Attack]`）は区別するので、チーム名はそろえておくのが安全です。
 4. 必要ならリスポーン地点を決めます（OP が必要）。その場所に立って実行します。
@@ -68,9 +68,9 @@
 
 ## 兵科選択（プレイヤーが兵種を選んで呼ぶ）
 
-ItemJoin を入れると、参加時とリスポーン時に「兵科選択」（紙、ホットバーの 8 番目）が配られます。
+呼べる回数が残っている間、「兵科選択」（紙、ホットバーの 8 番目）を持ちます。回数を使い切ると消えます。
 右クリックすると兵科選択の画面（`/sbc units`）が開き、剣兵・槍兵・弓兵のどれかを押すと、その兵種のボットを 1 体呼べます。
-呼べる回数は、前もってコマンドブロックで決めておきます。
+呼べる回数は、前もってコマンドブロックで決めておきます（決めると、その場で兵科選択が配られる）。
 
 | コマンドブロックの中身 | 押したとき |
 |---|---|
@@ -84,6 +84,8 @@ ItemJoin を入れると、参加時とリスポーン時に「兵科選択」�
 - 1 人あたりの上限（`max-per-player`、全兵種の合計）に届いていて、その兵種の倒れたボットもいなければ呼べません（回数は使わない）。
 - 回数が変わると、その人に「兵科選択で兵を呼べる回数: N 回」と知らせます。画面の右には残りの回数とボットの数が出ます。
 - 回数はサーバーを止めると消えます（試合ごとにコマンドブロックで決め直す想定）。持ち主が死んでも減りません。
+- 兵科選択は SiegeBot が配ります（ItemJoin は使わない）。回数が残っていれば、死んで落とさず、リスポーン・参加のときに持ち直します。
+  捨てることはできません。ホットバーの 8 番目がふさがっていれば、空いている所に入ります（持ち物が満杯なら、次のリスポーンか回数の変更のときに渡す）。
 - `/sb revive` とは別のしくみで、`/sb revive` は回数を使いません。
 
 ## 指揮メニュー
@@ -269,7 +271,7 @@ Windows では `build.cmd package` でも同じです（`tools/apache-maven-*` �
 |---|---|
 | `src/main/java/siegebot` | プラグイン本体 |
 | `src/test/java/siegebot` | 単体テスト（JUnit 5） |
-| `itemjoin/items.yml` | ItemJoin の指揮棒と兵科選択の設定 |
+| `itemjoin/items.yml` | ItemJoin の指揮棒の設定 |
 | `tools/make_review_zip.py` | 導入の確認用の zip（ライセンス文・ソース・ハッシュ入り）を作る |
 
 試験には、Paper 26.1.2 のサーバーを手元に立てて、Citizens と ItemJoin と一緒に入れて確かめました。

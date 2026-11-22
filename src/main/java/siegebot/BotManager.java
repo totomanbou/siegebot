@@ -345,12 +345,16 @@ public final class BotManager {
         return picks.getOrDefault(player, 0);
     }
 
-    /** 残りの回数を n にする（0 未満は 0）。 */
+    /** 残りの回数を n にする（0 未満は 0）。オンラインなら兵科選択のアイテムを回数に合わせる（0 なら消す）。 */
     public void setPicks(UUID player, int n) {
         if (n <= 0) {
             picks.remove(player);
         } else {
             picks.put(player, n);
+        }
+        Player p = Bukkit.getPlayer(player);
+        if (p != null && plugin.unitItem() != null) {
+            plugin.unitItem().sync(p);
         }
     }
 

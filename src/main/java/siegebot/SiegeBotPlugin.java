@@ -19,6 +19,7 @@ public final class SiegeBotPlugin extends JavaPlugin {
     private Archers archers;
     private BukkitTask archerTask;
     private Spearmen spearmen;
+    private UnitSelectItem unitItem;
     private BukkitTask spearTask;
     private CombatCheck combat;
     private PlayerCommand playerCommand;
@@ -37,6 +38,8 @@ public final class SiegeBotPlugin extends JavaPlugin {
         combat = new CombatCheck(getLogger());
 
         Bukkit.getPluginManager().registerEvents(new GameListener(this), this);
+        unitItem = new UnitSelectItem(this);
+        Bukkit.getPluginManager().registerEvents(unitItem, this);
         PluginCommand cmd = getCommand("siegebot");
         if (cmd != null) {
             SiegeBotCommand executor = new SiegeBotCommand(this);
@@ -129,6 +132,11 @@ public final class SiegeBotPlugin extends JavaPlugin {
     }
 
     /** /sbc と指揮メニュー（sbc が plugin.yml にないときは null）。 */
+    /** 兵科選択のアイテム（起動の途中は null のことがある）。 */
+    UnitSelectItem unitItem() {
+        return unitItem;
+    }
+
     PlayerCommand playerCommand() {
         return playerCommand;
     }
