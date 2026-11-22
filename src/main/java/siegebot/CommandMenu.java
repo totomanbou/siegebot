@@ -201,6 +201,96 @@ public final class CommandMenu implements Listener {
         return it;
     }
 
+    // ---- 兵科選択の画面（/sbc units） ----
+
+    /**
+     * 兵科選択の画面を開く（開いていれば描き直す）。兵種を押すと、呼べる回数を 1 使ってその兵種を 1 体呼ぶ
+     * （{@link BotManager#summon}）。画面はそのまま（残りの回数を描き直す）。
+     */
+    public void openUnits(Player p, Side side) {
+        Holder h = new Holder();
+        h.inventory = Bukkit.createInventory(h, 9, Component.text("兵科選択（" + side.label() + "）", NamedTextColor.DARK_GRAY));
+        BotManager bots = plugin.bots();
+        int left = bots.picks(p.getUniqueId());
+        List<SoldierBot> mine = commands.ownBots(p, side);
+        int max = plugin.settings().maxBotsPerPlayer;
+        int[] slots = {1, 3, 5};
+        UnitType[] types = {UnitType.SOLDIER, UnitType.SPEARMAN, UnitType.ARCHER};
+        for (int i = 0; i < types.length; i++) {
+            UnitType t = types[i];
+            int alive = 0;
+            int down = 0;
+            for (SoldierBot b : mine) {
+                if (b.type() == t) {
+                    if (b.alive()) {
+                        alive++;
+                    } else {
+                        down++;
+                    }
+                }
+            }
+            List<String> lore = new ArrayList<>();
+            lore.add("持っている: 参戦中 " + alive + " 体" + (down > 0 ? "・倒れている " + down + " 体" : ""));
+            lore.add(left <= 0 ? "呼べる回数が残っていない"
+                    : down > 0 ? "押すと 1 回使って、倒れている" + t.label() + "を戻す"
+                    : mine.size() >= max ? "上限（" + max + " 体）に届いているので呼べない"
+                    : "押すと 1 回使って、" + t.label() + "を 1 体呼ぶ");
+            ItemStack icon = unitIcon(t);
+            put(h, slots[i], decorate(icon, t.label(), NamedTextColor.AQUA, lore), () -> {
+                BotManager.SummonResult r = plugin.bots().summon(p, t);
+                String text = switch (r) {
+                    case SPAWNED -> t.label() + "を呼びました。";
+                    case REVIVED -> "倒れていた" + t.label() + "を戻しました。";
+                    case NO_PICKS -> "呼べる回数が残っていません。";
+                    case FULL -> "ボットの上限（" + max + " 体）に届いているので呼べません。";
+                    case NO_TEAM -> "攻め・守りのどちらのチームにも入っていません。";
+                    case DISABLED -> "専用のボットが無効なので、兵科選択は使えません。";
+                    case NO_PLACE -> "出す場所がありません。";
+                };
+                boolean ok = r == BotManager.SummonResult.SPAWNED || r == BotManager.SummonResult.REVIVED;
+                p.sendMessage(Component.text("[SiegeBot] ", NamedTextColor.GOLD)
+                        .append(Component.text(text, ok ? NamedTextColor.GREEN : NamedTextColor.RED)));
+                Side now = plugin.bots().sideOf(p);
+                if (now != null) {
+                    openUnits(p, now);
+                } else {
+                    p.closeInventory();
+                }
+            });
+        }
+        put(h, 7, button(Material.PAPER, "残り " + left + " 回", left > 0 ? NamedTextColor.GREEN : NamedTextColor.RED, false,
+                List.of("兵科を選んで兵を呼べる回数（コマンドブロックで決まる）",
+                        "ボット: " + mine.size() + " / " + max + " 体")), () -> { });
+        p.openInventory(h.inventory);
+    }
+
+    /** 兵種の絵: その兵種の装備の右手（槍兵なら本サーバーで槍に見える斧）。なければ兵種の武器。 */
+    private ItemStack unitIcon(UnitType t) {
+        ItemStack hand = plugin.settings().unit(t).equipment.get("hand");
+        if (hand != null) {
+            return hand.clone();
+        }
+        return new ItemStack(switch (t) {
+            case ARCHER -> Material.BOW;
+            case SPEARMAN -> Material.IRON_AXE;
+            default -> Material.IRON_SWORD;
+        });
+    }
+
+    /** 渡したアイテムに名前と説明を付ける（部品の見た目はそのまま）。 */
+    private static ItemStack decorate(ItemStack it, String title, NamedTextColor color, List<String> lore) {
+        ItemMeta meta = it.getItemMeta();
+        meta.displayName(Component.text(title, color).decoration(TextDecoration.ITALIC, false));
+        List<Component> l = new ArrayList<>();
+        for (String s : lore) {
+            l.add(Component.text(s, NamedTextColor.GRAY).decoration(TextDecoration.ITALIC, false));
+        }
+        meta.lore(l);
+        meta.addItemFlags(ItemFlag.values());
+        it.setItemMeta(meta);
+        return it;
+    }
+
     // ---- 画面の操作 ----
 
     @EventHandler(ignoreCancelled = true)

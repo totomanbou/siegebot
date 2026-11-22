@@ -20,7 +20,7 @@ public final class SiegeBotCommand implements TabExecutor {
     private static final String PREFIX = "[SiegeBot] ";
     private static final Pattern BOT_NAME = Pattern.compile("[A-Za-z0-9_]{1,16}");
     private static final List<String> SUBS = List.of(
-            "help", "revive", "spawn", "remove", "list", "spawnpoint", "set", "tp", "protect", "debug", "reload");
+            "help", "revive", "picks", "spawn", "remove", "list", "spawnpoint", "set", "tp", "protect", "debug", "reload");
     private static final List<String> SIDES = List.of("attack", "defend");
     private static final List<String> STANCES = List.of("push", "guard");
 
@@ -37,6 +37,7 @@ public final class SiegeBotCommand implements TabExecutor {
             case "help" -> help(sender);
             case "spawn" -> spawn(sender, args);
             case "revive" -> revive(sender, args);
+            case "picks" -> picks(sender, args);
             case "remove" -> remove(sender, args);
             case "list" -> list(sender);
             case "spawnpoint" -> spawnpoint(sender, args);
@@ -72,6 +73,7 @@ public final class SiegeBotCommand implements TabExecutor {
         msg(sender, "コマンド一覧:");
         msg(sender, "/sb revive <プレイヤー|@p|@a|bots|all> [数] [soldier|spearman|archer] - ボットを参戦させる（倒れていれば戻し、足りなければ出す。"
                 + "コマンドブロック用。数は 1 人あたりの体数。兵種を書くとその兵種だけを数えて出す）");
+        msg(sender, "/sb picks <プレイヤー|@p|@a|all> [数|add 数] - 兵科選択で兵を呼べる回数を決める・足す・見る（コマンドブロック用）");
         msg(sender, "/sb spawn <名前> <attack|defend> [soldier|spearman|archer] - 持ち主のいないボットを出す（出した地点を守る）");
         msg(sender, "/sb remove <名前> - ボットを消す");
         msg(sender, "/sb list - ボットの一覧");
@@ -231,6 +233,88 @@ public final class SiegeBotCommand implements TabExecutor {
             parts.add("持ち主のいないボットが参戦 " + adminRevived + "体");
         }
         msg(sender, parts.isEmpty() ? "対象のプレイヤーがいません。" : String.join(" / ", parts));
+    }
+
+    /**
+     * 兵科選択（/sbc units の画面）で兵を呼べる回数を決める。コマンドブロックから呼ぶ想定。
+     * <ul>
+     *   <li>/sb picks &lt;対象&gt; &lt;数&gt;     … 残りの回数をその数にする（0 で呼べなくする）</li>
+     *   <li>/sb picks &lt;対象&gt; add &lt;数&gt; … 残りの回数に足す（負の数で減らす）</li>
+     *   <li>/sb picks &lt;対象&gt;          … 残りの回数を見る</li>
+     * </ul>
+     * 対象はプレイヤー名・セレクタ（@p、@a[team=Attack] など）・all（オンラインの全員）。
+     */
+    private void picks(CommandSender sender, String[] args) {
+        String usage = "使い方: /sb picks <プレイヤー|@p|@a|all> [数|add 数]";
+        if (args.length < 2 || args.length > 4) {
+            msg(sender, usage);
+            return;
+        }
+        Integer set = null;
+        Integer add = null;
+        if (args.length == 3) {
+            set = parseInt(args[2]);
+            if (set == null || set < 0) {
+                msg(sender, "数は 0 以上の整数で書いてください。" + usage);
+                return;
+            }
+        } else if (args.length == 4) {
+            add = args[2].equalsIgnoreCase("add") ? parseInt(args[3]) : null;
+            if (add == null) {
+                msg(sender, usage);
+                return;
+            }
+        }
+        List<Player> players = selectPlayers(sender, args[1]);
+        if (players == null) {
+            return; // 理由は selectPlayers が伝えた
+        }
+        if (players.isEmpty()) {
+            msg(sender, "対象のプレイヤーがいません。");
+            return;
+        }
+        List<String> parts = new ArrayList<>();
+        for (Player p : players) {
+            BotManager bm = plugin.bots();
+            int now = bm.picks(p.getUniqueId());
+            int next = set != null ? set : add != null ? Math.max(0, now + add) : now;
+            bm.setPicks(p.getUniqueId(), next);
+            parts.add(p.getName() + " " + next + "回");
+            if (next != now && plugin.bots().sideOf(p) != null) {
+                p.sendMessage(net.kyori.adventure.text.Component.text("[SiegeBot] ", net.kyori.adventure.text.format.NamedTextColor.GOLD)
+                        .append(net.kyori.adventure.text.Component.text("兵科選択で兵を呼べる回数: " + next + " 回",
+                                net.kyori.adventure.text.format.NamedTextColor.WHITE)));
+            }
+        }
+        msg(sender, "兵科選択で呼べる回数: " + String.join("、", parts));
+    }
+
+    /** 対象（プレイヤー名・セレクタ・all）からオンラインのプレイヤー（ボットを除く）。書き方が誤りなら伝えて null。 */
+    private List<Player> selectPlayers(CommandSender sender, String arg) {
+        List<Player> players = new ArrayList<>();
+        if (arg.equalsIgnoreCase("all")) {
+            players.addAll(Bukkit.getOnlinePlayers());
+        } else if (arg.startsWith("@")) {
+            try {
+                for (org.bukkit.entity.Entity e : Bukkit.selectEntities(sender, arg)) {
+                    if (e instanceof Player p) {
+                        players.add(p);
+                    }
+                }
+            } catch (IllegalArgumentException e) {
+                msg(sender, "セレクタが正しくありません: " + arg);
+                return null;
+            }
+        } else {
+            Player p = Bukkit.getPlayerExact(arg);
+            if (p == null) {
+                msg(sender, "プレイヤー " + arg + " はオンラインではありません。");
+                return null;
+            }
+            players.add(p);
+        }
+        players.removeIf(p -> plugin.bots().byEntity(p) != null);
+        return players;
     }
 
     private void remove(CommandSender sender, String[] args) {
@@ -507,6 +591,7 @@ public final class SiegeBotCommand implements TabExecutor {
             case "revive" -> n == 2 ? reviveTargets()
                     : (n == 3 || n == 4) && !args[1].equalsIgnoreCase("bots") ? reviveExtras(args) : List.of();
             case "protect" -> n == 2 ? botNames(false) : n == 3 ? List.of("on", "off") : List.of();
+            case "picks" -> n == 2 ? picksTargets() : n == 3 ? List.of("1", "2", "3", "add", "0") : List.of();
             case "spawnpoint" -> n == 2 ? SIDES : n == 3 ? List.of("clear") : List.of();
             case "set" -> completeSet(args);
             default -> List.of();
@@ -559,6 +644,14 @@ public final class SiegeBotCommand implements TabExecutor {
         }
         if (!hasType) {
             r.addAll(TYPES);
+        }
+        return r;
+    }
+
+    private List<String> picksTargets() {
+        List<String> r = new ArrayList<>(List.of("@p", "@a", "all"));
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            r.add(p.getName());
         }
         return r;
     }

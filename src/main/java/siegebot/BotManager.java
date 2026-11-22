@@ -336,6 +336,83 @@ public final class BotManager {
         return new ReviveReport(ReviveReport.Status.OK, spawned, revived, alive, capped);
     }
 
+    // ---- 兵科選択（呼べる回数を使って、兵種を選んで 1 体ずつ呼ぶ） ----
+
+    /** プレイヤー → 兵科選択で呼べる残りの回数。コマンドブロックの /sb picks で決める。サーバーを止めると消える。 */
+    private final Map<UUID, Integer> picks = new java.util.HashMap<>();
+
+    public int picks(UUID player) {
+        return picks.getOrDefault(player, 0);
+    }
+
+    /** 残りの回数を n にする（0 未満は 0）。 */
+    public void setPicks(UUID player, int n) {
+        if (n <= 0) {
+            picks.remove(player);
+        } else {
+            picks.put(player, n);
+        }
+    }
+
+    /** {@link #summon} の結果。 */
+    public enum SummonResult {
+        /** 新しく出した */
+        SPAWNED,
+        /** 倒れていたその兵種のボットを戻した */
+        REVIVED,
+        /** 呼べる回数が残っていない */
+        NO_PICKS,
+        /** 1 人あたりの上限（max-per-player）に届いていて、その兵種の倒れたボットもいない */
+        FULL,
+        /** 攻め・守りのどちらのチームにも入っていない */
+        NO_TEAM,
+        /** personal-bots.enabled が false */
+        DISABLED,
+        /** 出す場所が決まらなかった */
+        NO_PLACE
+    }
+
+    /**
+     * 兵科選択: 呼べる回数を 1 使って、その兵種のボットを 1 体参戦させる。
+     * その兵種の倒れているボットがいれば戻し（方針はそのまま）、いなければ新しく出す（上限 max-per-player まで）。
+     * 呼べなかったときは回数を使わない。
+     */
+    public SummonResult summon(Player p, UnitType type) {
+        if (!plugin.settings().personalBots) {
+            return SummonResult.DISABLED;
+        }
+        Side side = sideOf(p);
+        if (side == null) {
+            return SummonResult.NO_TEAM;
+        }
+        if (picks(p.getUniqueId()) <= 0) {
+            return SummonResult.NO_PICKS;
+        }
+        for (SoldierBot old : ownedBy(p.getUniqueId())) {
+            if (old.side != side) {
+                remove(old.name); // チームを移った後の古いボット
+            }
+        }
+        List<SoldierBot> mine = ownedBy(p.getUniqueId());
+        for (SoldierBot b : mine) {
+            if (b.type == type && !b.npc.isSpawned() && reviveBot(b, false)) {
+                setPicks(p.getUniqueId(), picks(p.getUniqueId()) - 1);
+                say(b, type.label() + "、参戦した");
+                return SummonResult.REVIVED;
+            }
+        }
+        if (mine.size() >= plugin.settings().maxBotsPerPlayer) {
+            return SummonResult.FULL;
+        }
+        SoldierBot b = spawn(personalName(p.getName(), type), side, p.getLocation(), p.getUniqueId(), p.getName(), type);
+        if (b == null) {
+            return SummonResult.NO_PLACE;
+        }
+        setPicks(p.getUniqueId(), picks(p.getUniqueId()) - 1);
+        say(b, type.label() + "、参戦した");
+        return SummonResult.SPAWNED;
+    }
+
     /** 倒れているボットを出し直す（方針はそのまま）。生きていれば何もせず false。 */
     public boolean reviveBot(SoldierBot bot) {
         return reviveBot(bot, true);

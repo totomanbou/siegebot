@@ -13,7 +13,7 @@
 
 1. [Releases](../../releases) から `SiegeBot-0.7.0.jar` を取ってくるか、自分でビルドします（下の「ビルド」）。
 2. サーバーの `plugins` フォルダに、Citizens の jar と `SiegeBot-0.7.0.jar` を入れて起動します。
-   指揮棒を使うなら、ItemJoin の jar も入れ、[`itemjoin/items.yml`](itemjoin/items.yml) を `plugins/ItemJoin/items.yml` に置きます。
+   指揮棒と兵科選択を使うなら、ItemJoin の jar も入れ、[`itemjoin/items.yml`](itemjoin/items.yml) を `plugins/ItemJoin/items.yml` に置きます。
 3. `plugins/SiegeBot/config.yml` の `teams.attack` / `teams.defend` を、攻め・守りのスコアボードのチーム名（`/team` で作ったチームの名前）に合わせ、`/sb reload` で読み直します。
    既定は `Attack` と `Defence` です。SiegeBot は大文字・小文字を区別せずに比べますが、コマンドのセレクタ（`@a[team=Attack]`）は区別するので、チーム名はそろえておくのが安全です。
 4. 必要ならリスポーン地点を決めます（OP が必要）。その場所に立って実行します。
@@ -66,6 +66,26 @@
 （コマンドブロックの出力に「上限に届いたので 2体は出せませんでした」と出ます）。
 コマンドブロックの出力（最後の結果）に、参戦した体数（新しく出した・倒れていた）が出ます。
 
+## 兵科選択（プレイヤーが兵種を選んで呼ぶ）
+
+ItemJoin を入れると、参加時とリスポーン時に「兵科選択」（紙、ホットバーの 8 番目）が配られます。
+右クリックすると兵科選択の画面（`/sbc units`）が開き、剣兵・槍兵・弓兵のどれかを押すと、その兵種のボットを 1 体呼べます。
+呼べる回数は、前もってコマンドブロックで決めておきます。
+
+| コマンドブロックの中身 | 押したとき |
+|---|---|
+| `sb picks @p 3` | ボタンを押した人が、兵科選択で 3 回呼べるようにする（残りの回数を 3 にする） |
+| `sb picks @a[team=Attack] 2` | 攻めのチーム全員の残りの回数を 2 にする |
+| `sb picks @p add 1` | ボタンを押した人の残りの回数を 1 増やす（`add -1` で減らす） |
+| `sb picks @a 0` | 全員を呼べなくする |
+| `sb picks @p` | 残りの回数を見る（変えない） |
+
+- 兵種を押すと回数を 1 使います。その兵種の倒れているボットがいれば戻し（方針はそのまま）、いなければ新しく出します。
+- 1 人あたりの上限（`max-per-player`、全兵種の合計）に届いていて、その兵種の倒れたボットもいなければ呼べません（回数は使わない）。
+- 回数が変わると、その人に「兵科選択で兵を呼べる回数: N 回」と知らせます。画面の右には残りの回数とボットの数が出ます。
+- 回数はサーバーを止めると消えます（試合ごとにコマンドブロックで決め直す想定）。持ち主が死んでも減りません。
+- `/sb revive` とは別のしくみで、`/sb revive` は回数を使いません。
+
 ## 指揮メニュー
 
 ItemJoin を入れると、参加時とリスポーン時に「指揮棒」が配られます（ホットバーの 9 番目）。
@@ -99,6 +119,7 @@ ItemJoin を入れると、参加時とリスポーン時に「指揮棒」が�
 | コマンド | 内容 |
 |---|---|
 | `/sbc` または `/sbc menu` | 指揮メニューを開く |
+| `/sbc units` | 兵科選択の画面を開く（ボットがまだいなくても開ける） |
 | `/sbc follow` | 自分についてこさせる |
 | `/sbc hold` | 視点の先を守らせる |
 | `/sbc call` | 自分の所へ瞬間移動させる（`orders.call-cooldown-seconds` で続けて使えない秒数を決められる。既定 0 で制限なし） |
@@ -115,6 +136,7 @@ ItemJoin を入れると、参加時とリスポーン時に「指揮棒」が�
 |---|---|
 | `/sb spawnpoint <attack\|defend> [clear \| x y z]` | 陣営のリスポーン地点を今いる場所（または座標）にする。`clear` で消す |
 | `/sb revive <プレイヤー\|@p\|@a\|bots\|all> [数] [soldier\|spearman\|archer]` | ボットを参戦させる（コマンドブロック用。数は 1 人あたりの体数。上の表を参照） |
+| `/sb picks <プレイヤー\|@p\|@a\|all> [数 \| add 数]` | 兵科選択で呼べる回数を決める・足す・見る（コマンドブロック用。上の「兵科選択」を参照） |
 | `/sb spawn <名前> <attack\|defend> [soldier\|spearman\|archer]` | 持ち主のいないボットを出す（兵種を省くと `units.default`）。出した地点を守る。保存され、再起動後も出る |
 | `/sb remove <名前>` | ボットを消す |
 | `/sb list` | ボットと方針・持ち主の一覧 |
@@ -247,7 +269,7 @@ Windows では `build.cmd package` でも同じです（`tools/apache-maven-*` �
 |---|---|
 | `src/main/java/siegebot` | プラグイン本体 |
 | `src/test/java/siegebot` | 単体テスト（JUnit 5） |
-| `itemjoin/items.yml` | ItemJoin の指揮棒の設定 |
+| `itemjoin/items.yml` | ItemJoin の指揮棒と兵科選択の設定 |
 | `tools/make_review_zip.py` | 導入の確認用の zip（ライセンス文・ソース・ハッシュ入り）を作る |
 
 試験には、Paper 26.1.2 のサーバーを手元に立てて、Citizens と ItemJoin と一緒に入れて確かめました。

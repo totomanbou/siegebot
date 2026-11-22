@@ -21,6 +21,7 @@ import org.bukkit.entity.Player;
  *
  * <ul>
  *   <li>/sbc menu                 … 指揮メニューを開く</li>
+ *   <li>/sbc units                … 兵科選択の画面を開く（呼べる回数を使って、兵種を選んで兵を呼ぶ）</li>
  *   <li>/sbc follow               … 自分についてこさせる</li>
  *   <li>/sbc hold                 … 自分の視点の先（見ているブロックの所）を守らせる</li>
  *   <li>/sbc call                 … 自分の所へ瞬間移動させる（方針はそのまま）</li>
@@ -32,8 +33,8 @@ import org.bukkit.entity.Player;
  */
 public final class PlayerCommand implements TabExecutor {
 
-    private static final List<String> SUBS = List.of("menu", "follow", "hold", "call", "retreat", "stance", "target",
-            "status");
+    private static final List<String> SUBS = List.of("menu", "units", "follow", "hold", "call", "retreat", "stance",
+            "target", "status");
 
     private final SiegeBotPlugin plugin;
     private final CommandMenu menu;
@@ -63,8 +64,16 @@ public final class PlayerCommand implements TabExecutor {
             tell(p, "攻め・守りのどちらのチームにも入っていません。", NamedTextColor.RED);
             return true;
         }
+        if (args.length >= 1 && args[0].equalsIgnoreCase("units")) {
+            if (!personal()) {
+                tell(p, "専用のボットが無効なので、兵科選択は使えません。", NamedTextColor.RED);
+            } else {
+                menu.openUnits(p, side); // ボットがまだ 1 体もいなくても開ける
+            }
+            return true;
+        }
         if (targets(p, side).isEmpty()) {
-            tell(p, personal() ? "あなたのボットはいません（コマンドブロックで呼び出してください）。"
+            tell(p, personal() ? "あなたのボットはいません（兵科選択か、コマンドブロックで呼んでください）。"
                     : side.label() + "のボットがいません。", NamedTextColor.RED);
             return true;
         }
