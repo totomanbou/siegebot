@@ -69,11 +69,13 @@ final class Archers {
             ok = false;
         }
         Vector dir = ok ? aim(bot, p, t, s) : null;
+        bot.aimWant = dir; // 照準（Aim）はこの向きへ回る
         if (dir == null) {
             lower(bot, p);
             return;
         }
-        bot.npc.faceLocation(p.getEyeLocation().add(dir.clone().multiply(8)));
+        Vector sight = Aim.direction(bot, p, true); // 揺れを含めた照準
+        bot.npc.faceLocation(p.getEyeLocation().add(sight.clone().multiply(8)));
         if (bot.drawStartTick < 0) {
             if (now >= bot.nextDrawTick) {
                 p.startUsingItem(EquipmentSlot.HAND);
@@ -81,10 +83,11 @@ final class Archers {
             }
             return;
         }
-        if (now - bot.drawStartTick < s.archerDrawTicks || allyInLine(bot, p, t, dir)) {
-            return; // 引いている途中か、間に味方がいる（引いたまま待つ）
+        if (now - bot.drawStartTick < s.archerDrawTicks || allyInLine(bot, p, t, dir)
+                || Aim.error(bot, p, dir) > Aim.FIRE_TOLERANCE) {
+            return; // 引いている途中か、間に味方がいるか、照準が狙いに来ていない（引いたまま待つ）
         }
-        shoot(p, dir, s);
+        shoot(p, sight, s);
         if (GameListener.logKnockback) { // /sb debug kb の間は、撃った矢もログに出す
             plugin.getLogger().info(String.format(java.util.Locale.ROOT, "[kb] t=%d SHOOT %s -> %s dist=%.1f",
                     now, bot.name, t.getName(), p.getLocation().distance(t.getLocation())));

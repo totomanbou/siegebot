@@ -21,6 +21,8 @@ public final class SiegeBotPlugin extends JavaPlugin {
     private Spearmen spearmen;
     private UnitSelectItem unitItem;
     private BukkitTask spearTask;
+    private Aim aim;
+    private BukkitTask aimTask;
     private BukkitTask chaseTask;
     private CombatCheck combat;
     private PlayerCommand playerCommand;
@@ -36,6 +38,7 @@ public final class SiegeBotPlugin extends JavaPlugin {
         shields = new Shields(this);
         archers = new Archers(this);
         spearmen = new Spearmen(this);
+        aim = new Aim(this);
         combat = new CombatCheck(getLogger());
 
         Bukkit.getPluginManager().registerEvents(new GameListener(this), this);
@@ -98,6 +101,10 @@ public final class SiegeBotPlugin extends JavaPlugin {
             spearTask.cancel();
         }
         spearTask = Bukkit.getScheduler().runTaskTimer(this, () -> spearmen.tick(), 40L, Spearmen.TICK_PERIOD);
+        if (aimTask != null) {
+            aimTask.cancel();
+        }
+        aimTask = Bukkit.getScheduler().runTaskTimer(this, () -> aim.tick(), 40L, Aim.TICK_PERIOD);
         if (chaseTask != null) {
             chaseTask.cancel();
         }

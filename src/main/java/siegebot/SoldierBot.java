@@ -61,6 +61,15 @@ public final class SoldierBot {
     LivingEntity aimLastTarget;
     /** 見積もった狙いの速さ（ブロック/tick）。 */
     org.bukkit.util.Vector aimVelocity = new org.bukkit.util.Vector();
+    /** エイム（{@link Aim}）: 照準の向き（度）。aimSet が false なら次の tick に体の向きから始める。 */
+    double aimYaw;
+    double aimPitch;
+    boolean aimSet;
+    /** エイム: 照準の今の揺れ（度）。 */
+    double swayYaw;
+    double swayPitch;
+    /** 弓兵: 照準を向けたい弾道の向き（{@link Archers} が決める）。null なら狙っていない。 */
+    org.bukkit.util.Vector aimWant;
 
     SoldierBot(String name, Side side, NPC npc, UUID owner, UnitType type) {
         this.name = name;

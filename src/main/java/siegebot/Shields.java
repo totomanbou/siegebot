@@ -149,7 +149,7 @@ final class Shields {
                 : p.hasCooldown(Material.SHIELD) ? "使えない" : "下ろす";
         // 残りの耐久（盾は防ぐと削れて、0 で壊れる）
         ItemStack off = p.getInventory().getItemInOffHand();
-        int max = off.getType().getMaxDurability();
+        int max = BotManager.maxDurability(off);
         int dmg = off.getItemMeta() instanceof org.bukkit.inventory.meta.Damageable d ? d.getDamage() : 0;
         return state + "(耐久" + (max - dmg) + "/" + max + ")";
     }

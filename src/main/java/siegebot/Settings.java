@@ -121,9 +121,16 @@ public final class Settings {
         public final double defenseMultiplier;
         /** 最大の体力（書いていなければ 20 = ハート 10 個）。 */
         public final double maxHealth;
+        /** エイム: 照準が回る速さの上限（度/tick。0 以下なら一瞬で向く）。aim.turn-speed。 */
+        public final double aimTurnSpeed;
+        /** エイム: 照準の揺れの大きさ（度。0 なら揺れない）。aim.sway。 */
+        public final double aimSway;
+        /** 盾の耐久（防げる量。0 なら盾のアイテムのまま = バニラは 336）。shield-durability。 */
+        public final int shieldDurability;
 
         Unit(String nameSuffix, Map<String, ItemStack> equipment, double attackRange, int attackDelayTicks,
-             float speed, double damageMultiplier, double defenseMultiplier, double maxHealth) {
+             float speed, double damageMultiplier, double defenseMultiplier, double maxHealth,
+             double aimTurnSpeed, double aimSway, int shieldDurability) {
             this.nameSuffix = nameSuffix;
             this.equipment = equipment;
             this.attackRange = attackRange;
@@ -132,6 +139,9 @@ public final class Settings {
             this.damageMultiplier = damageMultiplier;
             this.defenseMultiplier = defenseMultiplier;
             this.maxHealth = maxHealth;
+            this.aimTurnSpeed = aimTurnSpeed;
+            this.aimSway = aimSway;
+            this.shieldDurability = shieldDurability;
         }
     }
 
@@ -144,13 +154,17 @@ public final class Settings {
         return c.contains(path, true) ? c.getDouble(path, fallback) : fallback;
     }
 
+    /** turnSpeed・sway・shieldDurability は、その兵種の aim.turn-speed・aim.sway・shield-durability の既定。 */
     private Unit unit(FileConfiguration c, String unit, String suffix, Map<String, ItemStack> eq,
-                      double attackRange, int attackDelayTicks) {
+                      double attackRange, int attackDelayTicks, double turnSpeed, double sway, int shieldDurability) {
         return new Unit(suffix, eq, attackRange, attackDelayTicks,
                 (float) over(c, unit, "speed", speed),
                 Math.max(0.0, over(c, unit, "damage-multiplier", damageMultiplier)),
                 Math.max(0.1, over(c, unit, "defense-multiplier", defenseMultiplier)),
-                Math.max(1.0, Math.min(1024.0, over(c, unit, "max-health", 20.0))));
+                Math.max(1.0, Math.min(1024.0, over(c, unit, "max-health", 20.0))),
+                over(c, unit, "aim.turn-speed", turnSpeed),
+                Math.max(0.0, Math.min(45.0, over(c, unit, "aim.sway", sway))),
+                (int) Math.max(0, Math.min(100000, Math.round(over(c, unit, "shield-durability", shieldDurability)))));
     }
 
     public Settings(FileConfiguration c) {
@@ -205,14 +219,15 @@ public final class Settings {
                         "helmet", "IRON_HELMET", "chestplate", "IRON_CHESTPLATE",
                         "leggings", "IRON_LEGGINGS", "boots", "IRON_BOOTS")),
                 Math.max(1.0, over(c, "soldier", "attack-range", attackRange)),
-                Math.max(1, (int) Math.round(over(c, "soldier", "attack-delay-ticks", attackDelayTicks)))));
+                Math.max(1, (int) Math.round(over(c, "soldier", "attack-delay-ticks", attackDelayTicks))),
+                25.0, 3.0, 0));
         units.put(UnitType.ARCHER, unit(c, "archer",
                 c.getString("units.archer.name-suffix", "の弓兵"),
                 readEquipment("archer", own(c, "units.archer.equipment"), null, Map.of(
                         "hand", "BOW",
                         "helmet", "CHAINMAIL_HELMET", "chestplate", "LEATHER_CHESTPLATE",
                         "leggings", "LEATHER_LEGGINGS", "boots", "LEATHER_BOOTS")),
-                attackRange, attackDelayTicks));
+                attackRange, attackDelayTicks, 12.0, 0.5, 0));
         // 槍兵の既定の槍は、本サーバーで槍の見た目になる鉄の斧（custom_model_data の文字 "1"）
         units.put(UnitType.SPEARMAN, unit(c, "spearman",
                 c.getString("units.spearman.name-suffix", "の槍兵"),
@@ -221,7 +236,8 @@ public final class Settings {
                         "helmet", "IRON_HELMET", "chestplate", "IRON_CHESTPLATE",
                         "leggings", "CHAINMAIL_LEGGINGS", "boots", "IRON_BOOTS")),
                 Math.max(1.0, Math.min(8.0, c.getDouble("units.spearman.attack-range", 4.5))),
-                Math.max(1, c.getInt("units.spearman.attack-delay-ticks", 22))));
+                Math.max(1, c.getInt("units.spearman.attack-delay-ticks", 22)),
+                20.0, 2.0, 168)); // 槍兵の盾はバニラ（336）の半分
         spearStopInside = Math.max(0.0, c.getDouble("units.spearman.stop-inside", 0.2));
         spearAvoidCobweb = c.getBoolean("units.spearman.avoid-cobweb", true);
         spearShieldLowerAfterTicks = (int) Math.round(Math.max(0.0,

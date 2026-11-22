@@ -58,14 +58,18 @@ final class Spearmen {
         if (nav.isNavigating() && nav.getEntityTarget() != null && d <= unit.attackRange - s.spearStopInside) {
             nav.cancelNavigation(); // 届くぎりぎりの所で止まる
         }
-        bot.npc.faceLocation(t.getEyeLocation());
+        // 照準（Aim。回る速さに上限があり、揺れる）の方を向く
+        bot.npc.faceLocation(p.getEyeLocation().add(Aim.direction(bot, p, true).multiply(4)));
         if (now - bot.lastSpearAttackTick >= unit.attackDelayTicks) {
             bot.lastSpearAttackTick = now;
             p.swingMainHand();
-            net.citizensnpcs.util.NMS.attack(p, t);
+            boolean hit = Aim.meleeHits(bot, p, t, unit.attackRange + 0.3);
+            if (hit) {
+                net.citizensnpcs.util.NMS.attack(p, t);
+            }
             if (GameListener.logKnockback) { // /sb debug kb の間は、突いたこともログに出す
-                plugin.getLogger().info(String.format(java.util.Locale.ROOT, "[kb] t=%d THRUST %s -> %s reach=%.2f",
-                        now, bot.name, t.getName(), d));
+                plugin.getLogger().info(String.format(java.util.Locale.ROOT, "[kb] t=%d THRUST %s %s -> %s reach=%.2f %s",
+                        now, hit ? "HIT" : "MISS", bot.name, t.getName(), d, Aim.describe(bot, p)));
             }
         }
     }

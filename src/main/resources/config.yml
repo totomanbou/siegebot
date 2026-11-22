@@ -115,6 +115,12 @@ units:
       chestplate: IRON_CHESTPLATE
       leggings: IRON_LEGGINGS
       boots: IRON_BOOTS
+    # エイム（照準）。turn-speed: 照準が回る速さの上限（度/tick。20 tick で 1 秒。0 で一瞬で向く）。
+    # sway: 照準の揺れの大きさ（度。0 で揺れない）。攻撃のたびに、揺れを含めた照準が相手の当たり判定に
+    # 入っていれば当たり、外れていれば空振り（素早く横に回り込まれると、照準が追いつくまで空振りする）
+    aim:
+      turn-speed: 25
+      sway: 3.0
   # 槍兵: 届く距離が長く（attack-range）、届くぎりぎりの所から突く。殴り合いの最中も、飛んでくる矢は盾で防ぐ（突くより優先）
   spearman:
     name-suffix: "の槍兵"
@@ -143,6 +149,13 @@ units:
     shield-lower-after-seconds: 0
     # true: 敵を追う道に蜘蛛の巣があれば追わない（2 秒後に見直す。届く敵は、巣の向こうでもその場で突く）
     avoid-cobweb: true
+    # エイム（照準）。turn-speed: 照準が回る速さの上限（度/tick。20 tick で 1 秒。0 で一瞬で向く）。
+    # sway: 照準の揺れの大きさ（度。0 で揺れない）。剣兵と同じく、照準が相手から外れていれば空振り
+    aim:
+      turn-speed: 20
+      sway: 2.0
+    # 盾の耐久（防げる量。0 で盾のアイテムのまま = 336）。槍兵の盾は既定で半分
+    shield-durability: 168
   # 弓兵: 離れた所から矢を撃つ。矢は尽きず、拾えない
   archer:
     name-suffix: "の弓兵"
@@ -175,3 +188,9 @@ units:
     arrow-damage: 3.0
     # 狙いのぶれ（プレイヤーの弓は 1.0。0 で狙ったとおりに飛ぶ）
     inaccuracy: 1.0
+    # エイム（照準）。turn-speed: 照準が回る速さの上限（度/tick。20 tick で 1 秒。0 で一瞬で向く）。
+    # sway: 照準の揺れの大きさ（度。0 で揺れない）。照準が狙いに来るまで撃たず、撃つ向きは揺れを含めた照準
+    # （1 度で 30 ブロック先が約 0.5 ブロックずれる。その上に inaccuracy のぶれも掛かる）
+    aim:
+      turn-speed: 12
+      sway: 0.5

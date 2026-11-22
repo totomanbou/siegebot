@@ -161,7 +161,7 @@ public final class BotManager {
             if (slot == null || (e.getValue().getType() == Material.SHIELD && !plugin.settings().shieldEnabled)) {
                 continue; // shield.enabled が false なら盾は持たせない
             }
-            eq.set(slot, equipmentItem(e.getValue()));
+            eq.set(slot, equipmentItem(e.getValue(), plugin.settings().unit(type)));
         }
         applyNavigatorSettings(npc, type);
         SoldierBot bot = new SoldierBot(name, side, npc, owner, type);
@@ -485,6 +485,8 @@ public final class BotManager {
         p.speedModifier(unit.speed);
         p.attackRange(unit.attackRange);
         p.attackDelayTicks(unit.attackDelayTicks);
+        // 剣兵の攻撃（Citizens が届く所で attack-delay ごとに呼ぶ）。照準が外れていれば空振り（Aim）
+        p.attackStrategy(this::meleeAttack);
         // 動けないときに目的地へ瞬間移動しない（その場で経路を取り直す）
         p.stuckAction((n, nav) -> false);
         try {
@@ -494,9 +496,47 @@ public final class BotManager {
         }
     }
 
-    /** 装備のアイテム（設定のアイテムを写したもの）。盾はプレイヤーと同じく、防ぐと削れて壊れる（補充しない）。 */
-    private static ItemStack equipmentItem(ItemStack template) {
-        return template.clone();
+    /**
+     * Citizens の攻撃の代わり（剣兵。殴りながら追う間、届く所で attack-delay ごとに呼ばれる）。
+     * 腕を振り、揺れを含めた照準の線が相手の箱に入っていれば殴る（外れていれば空振り）。ボットでなければ Citizens に任せる。
+     */
+    private boolean meleeAttack(LivingEntity attacker, LivingEntity target) {
+        SoldierBot bot = byEntity(attacker);
+        if (bot == null || !(attacker instanceof Player p) || target == null) {
+            return false;
+        }
+        p.swingMainHand();
+        boolean hit = Aim.meleeHits(bot, p, target, plugin.settings().unit(bot.type).attackRange + 1.0);
+        if (hit) {
+            net.citizensnpcs.util.NMS.attack(attacker, target);
+        }
+        if (GameListener.logKnockback) {
+            plugin.getLogger().info(String.format(Locale.ROOT, "[kb] t=%d %s %s -> %s %s",
+                    Bukkit.getCurrentTick(), hit ? "HIT" : "MISS", bot.name, target.getName(), Aim.describe(bot, p)));
+        }
+        return true;
+    }
+
+    /**
+     * 装備のアイテム（設定のアイテムを写したもの）。盾はプレイヤーと同じく、防ぐと削れて壊れる（補充しない）。
+     * 兵種の shield-durability が 0 より大きければ、盾の耐久をその値にする。
+     */
+    private static ItemStack equipmentItem(ItemStack template, Settings.Unit unit) {
+        ItemStack item = template.clone();
+        if (item.getType() == Material.SHIELD && unit.shieldDurability > 0
+                && item.getItemMeta() instanceof org.bukkit.inventory.meta.Damageable d) {
+            d.setMaxDamage(unit.shieldDurability);
+            item.setItemMeta(d);
+        }
+        return item;
+    }
+
+    /** アイテムの耐久の上限（max_damage の部品があればその値、なければアイテムの種類の値）。 */
+    static int maxDurability(ItemStack item) {
+        if (item.getItemMeta() instanceof org.bukkit.inventory.meta.Damageable d && d.hasMaxDamage()) {
+            return d.getMaxDamage();
+        }
+        return item.getType().getMaxDurability();
     }
 
     /**
@@ -512,7 +552,7 @@ public final class BotManager {
             now = before.clone();
             if (now.getItemMeta() instanceof org.bukkit.inventory.meta.Damageable d) {
                 int next = d.getDamage() + damage;
-                if (next >= now.getType().getMaxDurability()) {
+                if (next >= maxDurability(now)) {
                     now = null; // 壊れた
                 } else {
                     d.setDamage(next);

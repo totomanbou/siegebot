@@ -526,9 +526,11 @@ public final class SiegeBotCommand implements TabExecutor {
                         + (cmd == null || cmd.strings().isEmpty() ? "" : "(model=" + String.join(",", cmd.strings()) + ")"));
             }
             msg(sender, String.format(Locale.ROOT,
-                    "%s: suffix=%s speed=%.2f damage=%.2f defense=%.2f max-health=%.1f attack-range=%.2f attack-delay=%d equipment=[%s]",
+                    "%s: suffix=%s speed=%.2f damage=%.2f defense=%.2f max-health=%.1f attack-range=%.2f attack-delay=%d "
+                            + "aim.turn-speed=%.1f aim.sway=%.2f shield-durability=%s equipment=[%s]",
                     t.key(), u.nameSuffix, u.speed, u.damageMultiplier, u.defenseMultiplier, u.maxHealth, u.attackRange,
-                    u.attackDelayTicks, String.join(" ", eq)));
+                    u.attackDelayTicks, u.aimTurnSpeed, u.aimSway,
+                    u.shieldDurability > 0 ? String.valueOf(u.shieldDurability) : "盾のまま", String.join(" ", eq)));
         }
         msg(sender, String.format(Locale.ROOT,
                 "spearman: stop-inside=%.2f back-off-inside=%.2f shield-lower=%dt / archer: range=%.1f min=%.1f keep=%.1f "
@@ -577,6 +579,7 @@ public final class SiegeBotCommand implements TabExecutor {
                 int c = plugin.combat().secondsLeft(bp); // CombatLog で戦闘中なら残りの秒数
                 sb.append(" combat=").append(c > 0 ? c + "s" : "なし");
                 sb.append(" shield=").append(plugin.shields().describe(b));
+                sb.append(" aim=").append(Aim.describe(b, bp));
                 org.bukkit.inventory.ItemStack hand = bp.getInventory().getItemInMainHand();
                 io.papermc.paper.datacomponent.item.CustomModelData cmd =
                         hand.getData(io.papermc.paper.datacomponent.DataComponentTypes.CUSTOM_MODEL_DATA);
