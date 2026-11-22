@@ -84,7 +84,7 @@ public final class Settings {
     public final int archerShotIntervalTicks;
     /** 弓兵: 矢の速さ（ブロック/tick。バニラの弓を引き切ると 3.0）。 */
     public final double archerArrowSpeed;
-    /** 弓兵: 矢の基本ダメージ（バニラは 2.0。当たったときのダメージは速さ × これ。damage-multiplier も掛かる）。 */
+    /** 弓兵: 矢の基本ダメージ（既定 3.0。バニラは 2.0。当たったときのダメージは速さ × これ。damage-multiplier も掛かる）。 */
     public final double archerArrowDamage;
     /** 弓兵: 狙いのぶれ（バニラのプレイヤーの弓は 1.0。0 で必ず狙ったとおりに飛ぶ）。 */
     public final double archerInaccuracy;
@@ -169,7 +169,7 @@ public final class Settings {
         archerDrawTicks = Math.max(3, c.getInt("units.archer.draw-ticks", 20));
         archerShotIntervalTicks = Math.max(0, c.getInt("units.archer.shot-interval-ticks", 10));
         archerArrowSpeed = Math.max(0.5, Math.min(5.0, c.getDouble("units.archer.arrow-speed", 3.0)));
-        archerArrowDamage = Math.max(0.0, c.getDouble("units.archer.arrow-damage", 2.0));
+        archerArrowDamage = Math.max(0.0, c.getDouble("units.archer.arrow-damage", 3.0));
         archerInaccuracy = Math.max(0.0, c.getDouble("units.archer.inaccuracy", 1.0));
     }
 
