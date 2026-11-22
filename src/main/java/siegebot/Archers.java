@@ -90,9 +90,7 @@ final class Archers {
                     now, bot.name, t.getName(), p.getLocation().distance(t.getLocation())));
         }
         lower(bot, p);
-        // 次に引き始めるまでの間は、shot-interval-ticks から shot-interval-max-ticks の間でランダム（弓兵がそろって撃たないように）
-        bot.nextDrawTick = now + s.archerShotIntervalTicks
-                + ThreadLocalRandom.current().nextInt(s.archerShotIntervalMaxTicks - s.archerShotIntervalTicks + 1);
+        bot.nextDrawTick = now + s.archerShotIntervalTicks;
     }
 
     private static void lower(SoldierBot bot, Player p) {
