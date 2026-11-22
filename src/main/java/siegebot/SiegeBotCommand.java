@@ -531,9 +531,10 @@ public final class SiegeBotCommand implements TabExecutor {
         }
         msg(sender, String.format(Locale.ROOT,
                 "spearman: stop-inside=%.2f back-off-inside=%.2f shield-lower=%dt / archer: range=%.1f min=%.1f keep=%.1f "
-                        + "draw=%dt interval=%dt speed=%.2f damage=%.2f inaccuracy=%.2f",
+                        + "draw=%dt interval=%d〜%dt speed=%.2f damage=%.2f inaccuracy=%.2f",
                 st.spearStopInside, st.spearBackOffInside, st.spearShieldLowerAfterTicks, st.archerRange,
                 st.archerMinDistance, st.archerKeepDistance, st.archerDrawTicks, st.archerShotIntervalTicks,
+                st.archerShotIntervalMaxTicks,
                 st.archerArrowSpeed, st.archerArrowDamage, st.archerInaccuracy));
         msg(sender, String.format(Locale.ROOT,
                 "combat: engage=%.1f push-leash=%.1f guard-leash=%.1f follow=%.1f arrive=%.1f path=%.0f fall-damage=%b "

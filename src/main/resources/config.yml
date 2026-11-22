@@ -166,8 +166,10 @@ units:
     keep-distance: 10
     # 弓を引き絞る時間（tick。20 で 1 秒。プレイヤーの弓は 20 で引き切り）
     draw-ticks: 20
-    # 撃ってから次に引き始めるまでの時間（tick）
+    # 撃ってから次に引き始めるまでの時間（tick）。shot-interval-ticks から shot-interval-max-ticks の間でランダムに決める
+    # （弓兵がそろって同じ間隔で撃たないように。同じ値にすると一定）
     shot-interval-ticks: 10
+    shot-interval-max-ticks: 30
     # 矢の速さ（ブロック/tick。プレイヤーが弓を引き切ると 3.0）
     arrow-speed: 3.0
     # 矢の基本ダメージ。当たったときのダメージは「速さ × これ」（3.0 × 3.0 で 9 = ハート 4.5 個。引き切りの会心で少し増える）。
