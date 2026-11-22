@@ -68,8 +68,9 @@ public final class CommandMenu implements Listener {
             SoldierBot own = choices.isEmpty() ? null : choices.get(0);
             who = own == null ? "自分のボット" : own.name();
             List<String> lore = own == null ? List.of("まだ出ていない")
-                    : List.of("今: " + own.order().describe(), own.alive() ? "生存" : "倒れている（コマンドブロックで参戦）");
-            put(h, 4, button(Material.PLAYER_HEAD, who, NamedTextColor.AQUA, false, lore), () -> open(p, side));
+                    : List.of(own.type().label() + "・今: " + own.order().describe(),
+                            own.alive() ? "生存" : "倒れている（コマンドブロックで参戦）");
+            put(h, 4, button(icon(own), who, NamedTextColor.AQUA, false, lore), () -> open(p, side));
         } else {
             List<SoldierBot> mine = choices;
             String sel = commands.selectedName(p, side);
@@ -80,9 +81,10 @@ public final class CommandMenu implements Listener {
                     });
             for (int i = 0; i < mine.size() && i < 8; i++) {
                 SoldierBot b = mine.get(i);
-                List<String> lore = List.of("今: " + b.order().describe(), b.alive() ? "生存" : "倒れている（コマンドブロックで参戦）",
+                List<String> lore = List.of(b.type().label() + "・今: " + b.order().describe(),
+                        b.alive() ? "生存" : "倒れている（コマンドブロックで参戦）",
                         "押すとこのボットだけに指示する");
-                put(h, 1 + i, button(Material.PLAYER_HEAD, b.name() + " に指示", NamedTextColor.AQUA,
+                put(h, 1 + i, button(icon(b), b.name() + " に指示", NamedTextColor.AQUA,
                         b.name().equals(sel), lore), () -> {
                             commands.select(p, b.name());
                             open(p, side);
@@ -167,6 +169,14 @@ public final class CommandMenu implements Listener {
     private static void put(Holder h, int slot, ItemStack item, Runnable action) {
         h.inventory.setItem(slot, item);
         h.actions.put(slot, action);
+    }
+
+    /** ボットの絵: 兵種の武器（弓兵は弓、剣兵は剣）。まだ出ていなければ頭。 */
+    private static Material icon(SoldierBot b) {
+        if (b == null) {
+            return Material.PLAYER_HEAD;
+        }
+        return b.type() == UnitType.ARCHER ? Material.BOW : Material.IRON_SWORD;
     }
 
     private static ItemStack button(Material m, String title, NamedTextColor color, boolean glow, List<String> lore) {

@@ -21,6 +21,7 @@ public final class SiegeData {
     private final Logger log;
     private final Map<Side, Point> spawns = new EnumMap<>(Side.class);
     private final Map<String, Side> bots = new LinkedHashMap<>();
+    private final Map<String, UnitType> botTypes = new LinkedHashMap<>();
 
     public SiegeData(File file, Logger log) {
         this.file = file;
@@ -37,9 +38,15 @@ public final class SiegeData {
         return bots;
     }
 
+    /** /sb spawn で出したボットの名前 → 兵種（書いていなければ入っていない。0.6 までの data.yml は兵種なし）。 */
+    public Map<String, UnitType> botTypes() {
+        return botTypes;
+    }
+
     public void load() {
         spawns.clear();
         bots.clear();
+        botTypes.clear();
         if (!file.exists()) {
             return;
         }
@@ -64,6 +71,10 @@ public final class SiegeData {
             Side side = Side.parse(m.get("side") == null ? null : String.valueOf(m.get("side")));
             if (name != null && !String.valueOf(name).isBlank() && side != null) {
                 bots.put(String.valueOf(name), side);
+                UnitType t = UnitType.parse(m.get("type") == null ? null : String.valueOf(m.get("type")));
+                if (t != null) {
+                    botTypes.put(String.valueOf(name), t);
+                }
             }
         }
     }
@@ -83,6 +94,10 @@ public final class SiegeData {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("name", e.getKey());
             m.put("side", e.getValue().key());
+            UnitType t = botTypes.get(e.getKey());
+            if (t != null) {
+                m.put("type", t.key());
+            }
             bl.add(m);
         }
         y.set("bots", bl);

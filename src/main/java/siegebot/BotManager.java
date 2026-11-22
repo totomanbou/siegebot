@@ -118,8 +118,8 @@ public final class BotManager {
      * @param fallback リスポーン地点が未設定のときに出す場所（null 可）
      * @return 作ったボット。同名がいる・出す場所がない場合は null
      */
-    public SoldierBot spawn(String name, Side side, Location fallback) {
-        return spawn(name, side, fallback, null, null);
+    public SoldierBot spawn(String name, Side side, Location fallback, UnitType type) {
+        return spawn(name, side, fallback, null, null, type);
     }
 
     /**
@@ -127,8 +127,12 @@ public final class BotManager {
      *
      * @param owner     持ち主の UUID（管理者のボットは null）
      * @param ownerName 持ち主の名前（管理者のボットは null）
+     * @param type      兵種（null なら units.default）
      */
-    public SoldierBot spawn(String name, Side side, Location fallback, UUID owner, String ownerName) {
+    public SoldierBot spawn(String name, Side side, Location fallback, UUID owner, String ownerName, UnitType type) {
+        if (type == null) {
+            type = plugin.settings().defaultUnit;
+        }
         if (get(name) != null) {
             return null;
         }
@@ -144,18 +148,15 @@ public final class BotManager {
         npc.data().set(NPC.Metadata.DISABLE_DEFAULT_STUCK_ACTION, true);
         npc.data().set(NPC.Metadata.KEEP_CHUNK_LOADED, true);
         Equipment eq = npc.getOrAddTrait(Equipment.class);
-        for (Map.Entry<String, Material> e : plugin.settings().equipment.entrySet()) {
+        for (Map.Entry<String, Material> e : plugin.settings().unit(type).equipment.entrySet()) {
             Equipment.EquipmentSlot slot = slotOf(e.getKey());
-            if (slot != null) {
-                eq.set(slot, equipmentItem(e.getValue()));
+            if (slot == null || (e.getValue() == Material.SHIELD && !plugin.settings().shieldEnabled)) {
+                continue; // shield.enabled が false なら盾は持たせない
             }
-        }
-        Map<String, Material> equipped = plugin.settings().equipment;
-        if (plugin.settings().shieldEnabled && !equipped.containsKey("off_hand") && !equipped.containsKey("offhand")) {
-            eq.set(Equipment.EquipmentSlot.OFF_HAND, equipmentItem(Material.SHIELD)); // 左手が未指定なら盾を持たせる
+            eq.set(slot, equipmentItem(e.getValue()));
         }
         applyNavigatorSettings(npc);
-        SoldierBot bot = new SoldierBot(name, side, npc, owner);
+        SoldierBot bot = new SoldierBot(name, side, npc, owner, type);
         bot.order = owner != null && ownerName != null
                 ? Order.follow(ownerName, Order.Stance.GUARD)
                 : Order.hold(Point.of(at), Order.Stance.GUARD);
@@ -245,8 +246,9 @@ public final class BotManager {
      * @param spawned 新しく出した数
      * @param revived 倒れていたのを蘇生した数
      * @param alive   もともと生きていた数（何もしなかった）
+     * @param capped  1 人あたりの上限（max-per-player）のせいで出せなかった数
      */
-    public record ReviveReport(Status status, int spawned, int revived, int alive) {
+    public record ReviveReport(Status status, int spawned, int revived, int alive, int capped) {
         public enum Status {
             OK,
             /** 攻め・守りのどちらのチームにも入っていない */
@@ -258,7 +260,7 @@ public final class BotManager {
         }
 
         static ReviveReport of(Status s) {
-            return new ReviveReport(s, 0, 0, 0);
+            return new ReviveReport(s, 0, 0, 0, 0);
         }
     }
 
@@ -268,8 +270,12 @@ public final class BotManager {
      *
      * <p>count が null なら「持っている全部を蘇生する（1 体もなければ 1 体出す）」。count は 1〜max-per-player に収める。
      * count より多く持っているときは、多い分には手を付けない（消さない・蘇生しない）。
+     *
+     * <p>type を指定すると、その兵種だけを数える: その兵種のボットを count 体そろえる（倒れていれば戻し、足りなければ
+     * その兵種で出す）。ほかの兵種のボットには手を付けない。全兵種の合計は max-per-player を超えない。
+     * type が null なら兵種を問わず数え、新しく出すのは units.default の兵種。
      */
-    public ReviveReport revive(Player p, Integer count) {
+    public ReviveReport revive(Player p, Integer count, UnitType type) {
         if (!plugin.settings().personalBots) {
             return ReviveReport.of(ReviveReport.Status.DISABLED);
         }
@@ -282,9 +288,20 @@ public final class BotManager {
                 remove(old.name); // チームを移った後の古いボット
             }
         }
-        List<SoldierBot> mine = ownedBy(p.getUniqueId());
+        List<SoldierBot> all = ownedBy(p.getUniqueId());
+        List<SoldierBot> mine = new ArrayList<>();
+        for (SoldierBot b : all) {
+            if (type == null || b.type == type) {
+                mine.add(b);
+            }
+        }
         int max = plugin.settings().maxBotsPerPlayer;
         int want = Math.max(1, Math.min(max, count == null ? Math.max(1, mine.size()) : count));
+        // 新しく出せるのは、全兵種の合計が上限に届くまで
+        int room = Math.max(0, max - all.size());
+        int toSpawn = Math.max(0, want - mine.size());
+        int capped = Math.max(0, toSpawn - room);
+        toSpawn -= capped;
 
         int spawned = 0;
         int revived = 0;
@@ -299,8 +316,10 @@ public final class BotManager {
                 voice = voice == null ? b : voice;
             }
         }
-        for (int i = mine.size(); i < want; i++) {
-            SoldierBot b = spawn(personalName(p.getName()), side, p.getLocation(), p.getUniqueId(), p.getName());
+        UnitType newType = type == null ? plugin.settings().defaultUnit : type;
+        for (int i = 0; i < toSpawn; i++) {
+            SoldierBot b = spawn(personalName(p.getName(), newType), side, p.getLocation(), p.getUniqueId(), p.getName(),
+                    newType);
             if (b == null) {
                 break;
             }
@@ -311,10 +330,10 @@ public final class BotManager {
             // 新しく出したのも倒れていたのも、どちらも「参戦」と言う
             say(voice, p.getName() + " の兵、" + (spawned + revived) + " 体参戦した");
         }
-        if (spawned + revived + alive == 0) {
+        if (spawned + revived + alive == 0 && capped == 0) {
             return ReviveReport.of(ReviveReport.Status.NO_PLACE);
         }
-        return new ReviveReport(ReviveReport.Status.OK, spawned, revived, alive);
+        return new ReviveReport(ReviveReport.Status.OK, spawned, revived, alive, capped);
     }
 
     /** 倒れているボットを出し直す（方針はそのまま）。生きていれば何もせず false。 */
@@ -358,11 +377,13 @@ public final class BotManager {
      * 専用のボットの名前（「名前の兵」、2 体目からは「名前2の兵」…）。16 文字に収まるよう名前を縮める
      * （max-per-player は 9 までなので番号は 1 桁）。
      */
-    private String personalName(String player) {
-        String base = player.length() > 14 ? player.substring(0, 14) : player;
-        String name = base + "の兵";
+    private String personalName(String player, UnitType type) {
+        String suffix = plugin.settings().unit(type).nameSuffix;
+        int room = Math.max(1, 16 - suffix.length()); // 名前は 16 文字まで
+        String base = player.length() > room ? player.substring(0, room) : player;
+        String name = base + suffix;
         for (int i = 2; get(name) != null; i++) {
-            name = base.substring(0, Math.min(base.length(), 13)) + i + "の兵";
+            name = base.substring(0, Math.min(base.length(), room - 1)) + i + suffix;
         }
         return name;
     }
@@ -713,7 +734,11 @@ public final class BotManager {
 
         LivingEntity target = pickTarget(bot, self, anchor, now);
         bot.target = target;
-        if (target != null) {
+        if (target != null && bot.type == UnitType.ARCHER) {
+            if (archerMove(bot, nav, self, target, anchor, s, now)) {
+                return;
+            }
+        } else if (target != null) {
             EntityTarget cur = nav.getEntityTarget();
             if (cur == null || cur.getTarget() != target || !nav.isNavigating()) {
                 nav.setTarget(target, true);
@@ -733,6 +758,89 @@ public final class BotManager {
             return;
         }
         walkTo(bot, nav, self, anchor, now);
+    }
+
+    /**
+     * 弓兵の動き（撃つのは {@link Archers} が 2 tick ごとに行う）。
+     * <ul>
+     *   <li>見えていて units.archer.range 以内: 止まって撃つ。min-distance より近ければ、keep-distance まで下がる。</li>
+     *   <li>見えない・遠い: 近づく（殴らない）。ただし敵が持ち場から leash（構えで決まる）の外なら近づかない。</li>
+     * </ul>
+     *
+     * @return 動きを決めたら true。false なら持ち場へ戻る動き（敵がいないときと同じ）に任せる
+     */
+    private boolean archerMove(SoldierBot bot, Navigator nav, LivingEntity self, LivingEntity target, Location anchor,
+                               Settings s, long now) {
+        Location here = self.getLocation();
+        Location t = target.getLocation();
+        double d = here.distance(t);
+        boolean los = self.hasLineOfSight(target);
+        if (los && d <= s.archerRange) {
+            if (d < s.archerMinDistance) {
+                Location away = retreatSpot(here, t, s.archerKeepDistance - d);
+                if (away != null) {
+                    Location dest = nav.isNavigating() ? nav.getTargetAsLocation() : null;
+                    if (!bot.archerBackingOff || dest == null || dest.distanceSquared(away) > 4.0) {
+                        nav.setTarget(away);
+                        bot.archerBackingOff = true;
+                    }
+                    return true;
+                }
+                // 下がる場所がなければ、その場で撃つ
+            }
+            // 下がっている途中なら keep-distance まで下がり切る。それ以外の歩き（近づく・持ち場へ）はやめて撃つ
+            boolean keepBacking = bot.archerBackingOff && nav.isNavigating() && d < s.archerKeepDistance;
+            if (!keepBacking) {
+                bot.archerBackingOff = false;
+                if (nav.isNavigating()) {
+                    nav.cancelNavigation();
+                }
+            }
+            return true;
+        }
+        bot.archerBackingOff = false;
+        double leash = bot.order != null && bot.order.stance() == Order.Stance.PUSH ? s.pushLeash : s.guardLeash;
+        if (anchor != null && t.distanceSquared(anchor) > leash * leash) {
+            return false; // 持ち場から離れすぎるので追わない（見えて届けば撃つ）
+        }
+        EntityTarget cur = nav.getEntityTarget();
+        if (cur == null || cur.getTarget() != target || cur.isAggressive() || !nav.isNavigating()) {
+            nav.setTarget(target, false); // 近づくだけで殴らない
+        }
+        return true;
+    }
+
+    /**
+     * 相手から離れる向きに distance ブロックほど先の、立てる場所。真後ろ・斜め後ろ・横の順に、
+     * 段差 ±1 まで探す。見つからなければ null。
+     */
+    private static Location retreatSpot(Location here, Location from, double distance) {
+        double ax = here.getX() - from.getX();
+        double az = here.getZ() - from.getZ();
+        double len = Math.hypot(ax, az);
+        if (len < 1e-6) {
+            ax = 1;
+            az = 0;
+            len = 1;
+        }
+        ax /= len;
+        az /= len;
+        double dist = Math.max(2.0, distance);
+        for (double deg : new double[] {0, 45, -45, 90, -90}) {
+            double r = Math.toRadians(deg);
+            double x = ax * Math.cos(r) - az * Math.sin(r);
+            double z = ax * Math.sin(r) + az * Math.cos(r);
+            Block base = here.getWorld().getBlockAt((int) Math.floor(here.getX() + x * dist), here.getBlockY(),
+                    (int) Math.floor(here.getZ() + z * dist));
+            for (int dy : new int[] {0, 1, -1}) {
+                Block feet = base.getRelative(0, dy, 0);
+                if (feet.isPassable() && !feet.isLiquid() && feet.getRelative(BlockFace.UP).isPassable()
+                        && feet.getRelative(BlockFace.DOWN).getType().isSolid()) {
+                    return feet.getLocation().add(0.5, 0, 0.5);
+                }
+            }
+        }
+        return null;
     }
 
     /** 持ち場に着いたか（追従なら follow-distance 以内、地点を守るなら arrive-radius 以内）。 */
@@ -770,6 +878,9 @@ public final class BotManager {
     private LivingEntity pickTarget(SoldierBot bot, LivingEntity self, Location anchor, long now) {
         Settings s = plugin.settings();
         double leash = bot.order != null && bot.order.stance() == Order.Stance.PUSH ? s.pushLeash : s.guardLeash;
+        if (bot.type == UnitType.ARCHER) {
+            leash = Math.max(leash, s.archerRange); // 弓兵は持ち場から届く敵も狙う（近づくのは leash の内だけ。archerMove）
+        }
         boolean currentValid = bot.target != null && validTarget(bot, self, bot.target, anchor, leash);
         if (currentValid && now - bot.lastRetargetTick < s.retargetTicks) {
             return bot.target;

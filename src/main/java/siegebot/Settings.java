@@ -67,8 +67,40 @@ public final class Settings {
     /** 盾を構えてから防げるようになるまでの時間（tick。バニラのプレイヤーは 5）。 */
     public final int shieldBlockingDelayTicks;
 
-    /** 装備の部位（hand, off_hand, helmet, chestplate, leggings, boots）→ アイテム。 */
-    public final Map<String, Material> equipment = new LinkedHashMap<>();
+    /** 兵種ごとの設定（全兵種が入っている）。 */
+    public final Map<UnitType, Unit> units = new java.util.EnumMap<>(UnitType.class);
+    /** /sb revive・/sb spawn で兵種を省いたときに新しく出す兵種。 */
+    public final UnitType defaultUnit;
+
+    /** 弓兵: 矢を撃つ最大の距離（ブロック）。これより遠い・見えない敵へは近づく。 */
+    public final double archerRange;
+    /** 弓兵: 近すぎる敵から下がるときは、敵からこの距離まで離れる（ブロック）。 */
+    public final double archerKeepDistance;
+    /** 弓兵: 敵がこれより近いと下がって距離を取る（ブロック）。 */
+    public final double archerMinDistance;
+    /** 弓兵: 弓を引き絞る時間（tick。20 で引き切り）。 */
+    public final int archerDrawTicks;
+    /** 弓兵: 撃ってから次に引き始めるまでの時間（tick）。 */
+    public final int archerShotIntervalTicks;
+    /** 弓兵: 矢の速さ（ブロック/tick。バニラの弓を引き切ると 3.0）。 */
+    public final double archerArrowSpeed;
+    /** 弓兵: 矢の基本ダメージ（バニラは 2.0。当たったときのダメージは速さ × これ。damage-multiplier も掛かる）。 */
+    public final double archerArrowDamage;
+    /** 弓兵: 狙いのぶれ（バニラのプレイヤーの弓は 1.0。0 で必ず狙ったとおりに飛ぶ）。 */
+    public final double archerInaccuracy;
+
+    /** 兵種 1 つ分の設定。 */
+    public static final class Unit {
+        /** 専用のボットの名前の後ろに付ける文字（「名前の兵」の「の兵」）。 */
+        public final String nameSuffix;
+        /** 装備の部位（hand, off_hand, helmet, chestplate, leggings, boots）→ アイテム。 */
+        public final Map<String, Material> equipment;
+
+        Unit(String nameSuffix, Map<String, Material> equipment) {
+            this.nameSuffix = nameSuffix;
+            this.equipment = equipment;
+        }
+    }
 
     public Settings(FileConfiguration c) {
         attackTeam = c.getString("teams.attack", "Attack");
@@ -111,15 +143,73 @@ public final class Settings {
                 (int) Math.round(c.getDouble("shield.lower-after-seconds", 0.5) * 20));
         shieldBlockingDelayTicks = Math.max(0, c.getInt("shield.blocking-delay-ticks", 0));
 
-        ConfigurationSection eq = c.getConfigurationSection("equipment");
-        if (eq != null) {
-            for (String slot : eq.getKeys(false)) {
-                Material m = Material.matchMaterial(String.valueOf(eq.getString(slot, "")));
-                if (m != null && m != Material.AIR) {
-                    equipment.put(slot.toLowerCase(Locale.ROOT), m);
+        // 兵種。units.soldier.equipment がなければ、0.6 までの書き方（一番上の equipment）を剣兵の装備にする。
+        // getConfigurationSection は、サーバーの config.yml にない節でも jar の既定にあれば空の節を作って返すので、
+        // 「書いてあるか」は contains(path, true)（既定を見ない）で確かめる
+        ConfigurationSection oldEq = own(c, "equipment");
+        units.put(UnitType.SOLDIER, new Unit(
+                c.getString("units.soldier.name-suffix", "の兵"),
+                readEquipment(own(c, "units.soldier.equipment"), oldEq, Map.of(
+                        "hand", Material.IRON_SWORD, "off_hand", Material.SHIELD,
+                        "helmet", Material.IRON_HELMET, "chestplate", Material.IRON_CHESTPLATE,
+                        "leggings", Material.IRON_LEGGINGS, "boots", Material.IRON_BOOTS))));
+        units.put(UnitType.ARCHER, new Unit(
+                c.getString("units.archer.name-suffix", "の弓兵"),
+                readEquipment(own(c, "units.archer.equipment"), null, Map.of(
+                        "hand", Material.BOW,
+                        "helmet", Material.CHAINMAIL_HELMET, "chestplate", Material.LEATHER_CHESTPLATE,
+                        "leggings", Material.LEATHER_LEGGINGS, "boots", Material.LEATHER_BOOTS))));
+        UnitType def = UnitType.parse(c.getString("units.default", "soldier"));
+        defaultUnit = def == null ? UnitType.SOLDIER : def;
+
+        archerRange = Math.max(4.0, c.getDouble("units.archer.range", 16));
+        archerMinDistance = Math.max(0.0, c.getDouble("units.archer.min-distance", 5));
+        archerKeepDistance = Math.max(archerMinDistance + 1, Math.min(archerRange,
+                c.getDouble("units.archer.keep-distance", 10)));
+        archerDrawTicks = Math.max(3, c.getInt("units.archer.draw-ticks", 20));
+        archerShotIntervalTicks = Math.max(0, c.getInt("units.archer.shot-interval-ticks", 10));
+        archerArrowSpeed = Math.max(0.5, Math.min(5.0, c.getDouble("units.archer.arrow-speed", 3.0)));
+        archerArrowDamage = Math.max(0.0, c.getDouble("units.archer.arrow-damage", 2.0));
+        archerInaccuracy = Math.max(0.0, c.getDouble("units.archer.inaccuracy", 1.0));
+    }
+
+    /** サーバーの config.yml に書いてある節（jar の既定だけにある節は null）。 */
+    private static ConfigurationSection own(FileConfiguration c, String path) {
+        return c.contains(path, true) ? c.getConfigurationSection(path) : null;
+    }
+
+    /**
+     * 装備の節を読む。sec がなければ fallback の節、それもなければ defaults。
+     * 節があれば書いてある部位だけを使う（書いていない部位は何も持たない）。
+     */
+    private static Map<String, Material> readEquipment(ConfigurationSection sec, ConfigurationSection fallback,
+                                                       Map<String, Material> defaults) {
+        ConfigurationSection use = sec != null ? sec : fallback;
+        Map<String, Material> r = new LinkedHashMap<>();
+        if (use == null) {
+            for (String slot : new String[] {"hand", "off_hand", "helmet", "chestplate", "leggings", "boots"}) {
+                if (defaults.containsKey(slot)) {
+                    r.put(slot, defaults.get(slot));
                 }
             }
+            return r;
         }
+        for (String slot : use.getKeys(false)) {
+            Material m = Material.matchMaterial(String.valueOf(use.getString(slot, "")));
+            if (m != null && m != Material.AIR) {
+                String k = slot.toLowerCase(Locale.ROOT);
+                r.put(k.equals("offhand") ? "off_hand" : k, m);
+            }
+        }
+        // 0.6 までの書き方では盾を書かずに自動で持たせていたので、古い節を読んだときは左手が未指定なら盾にする
+        if (sec == null && fallback != null && !r.containsKey("off_hand") && defaults.containsKey("off_hand")) {
+            r.put("off_hand", defaults.get("off_hand"));
+        }
+        return r;
+    }
+
+    public Unit unit(UnitType t) {
+        return units.get(t == null ? defaultUnit : t);
     }
 
     public String teamName(Side side) {

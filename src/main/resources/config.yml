@@ -90,10 +90,46 @@ shield:
   # 5 だと速い矢（弓を引き切った矢）に間に合わず、盾を上げているのに当たってノックバックする。既定 0 で構えた瞬間から防ぐ
   blocking-delay-ticks: 0
 
-# ボットの装備（アイテムの ID）。不要な部位は行ごと消してください
-equipment:
-  hand: IRON_SWORD
-  helmet: IRON_HELMET
-  chestplate: IRON_CHESTPLATE
-  leggings: IRON_LEGGINGS
-  boots: IRON_BOOTS
+# 兵種。/sb revive <対象> [数] [soldier|archer] と /sb spawn <名前> <陣営> [soldier|archer] で選ぶ
+units:
+  # 兵種を書かなかったときに新しく出す兵種
+  default: soldier
+  # 剣兵: 敵に近づいて斬る。盾で矢を防ぐ（shield の節）
+  soldier:
+    # 専用のボットの名前の後ろに付ける文字（「名前の兵」）
+    name-suffix: "の兵"
+    # 装備（アイテムの ID）。部位は hand・off_hand・helmet・chestplate・leggings・boots。不要な部位は行ごと消す
+    equipment:
+      hand: IRON_SWORD
+      off_hand: SHIELD
+      helmet: IRON_HELMET
+      chestplate: IRON_CHESTPLATE
+      leggings: IRON_LEGGINGS
+      boots: IRON_BOOTS
+  # 弓兵: 離れた所から矢を撃つ。矢は尽きず、拾えない
+  archer:
+    name-suffix: "の弓兵"
+    equipment:
+      hand: BOW
+      helmet: CHAINMAIL_HELMET
+      chestplate: LEATHER_CHESTPLATE
+      leggings: LEATHER_LEGGINGS
+      boots: LEATHER_BOOTS
+    # 撃つ最大の距離（ブロック）。これより遠い・見えない敵へは近づく（近づくのは持ち場から push-leash / guard-leash の内だけ。
+    # 狙うのは持ち場からこの距離までの敵）
+    range: 16
+    # 敵がこの距離より近いと下がる（ブロック）
+    min-distance: 5
+    # 下がるときは、敵からこの距離まで離れる（ブロック）
+    keep-distance: 10
+    # 弓を引き絞る時間（tick。20 で 1 秒。プレイヤーの弓は 20 で引き切り）
+    draw-ticks: 20
+    # 撃ってから次に引き始めるまでの時間（tick）
+    shot-interval-ticks: 10
+    # 矢の速さ（ブロック/tick。プレイヤーが弓を引き切ると 3.0）
+    arrow-speed: 3.0
+    # 矢の基本ダメージ。当たったときのダメージは「速さ × これ」（3.0 × 2.0 で 6 = ハート 3 個。引き切りの会心で少し増える）。
+    # combat.damage-multiplier も掛かる
+    arrow-damage: 2.0
+    # 狙いのぶれ（プレイヤーの弓は 1.0。0 で狙ったとおりに飛ぶ）
+    inaccuracy: 1.0

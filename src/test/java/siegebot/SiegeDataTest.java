@@ -106,5 +106,34 @@ class SiegeDataTest {
         assertEquals(1, warnings.size());
         assertTrue(warnings.get(0).contains("spawns.attack"));
         assertEquals(List.of("A1"), new ArrayList<>(d.bots().keySet()));
+        assertTrue(d.botTypes().isEmpty()); // 兵種を書いていない古い data.yml は兵種なし（出すときは units.default）
+    }
+
+    @Test
+    void unitTypeRoundTrip() throws Exception {
+        File f = dir.resolve("data.yml").toFile();
+        SiegeData d = new SiegeData(f, logger(new ArrayList<>()));
+        d.bots().put("R1", Side.ATTACK);
+        d.botTypes().put("R1", UnitType.ARCHER);
+        d.bots().put("S1", Side.DEFEND); // 兵種なし
+        d.save();
+        assertTrue(Files.readString(f.toPath(), StandardCharsets.UTF_8).contains("type: archer"));
+        SiegeData back = new SiegeData(f, logger(new ArrayList<>()));
+        back.load();
+        assertEquals(UnitType.ARCHER, back.botTypes().get("R1"));
+        assertFalse(back.botTypes().containsKey("S1"));
+        assertEquals(Side.DEFEND, back.bots().get("S1"));
+    }
+
+    @Test
+    void unitTypeParse() {
+        assertEquals(UnitType.ARCHER, UnitType.parse("archer"));
+        assertEquals(UnitType.ARCHER, UnitType.parse("BOW"));
+        assertEquals(UnitType.ARCHER, UnitType.parse("弓兵"));
+        assertEquals(UnitType.SOLDIER, UnitType.parse("Soldier"));
+        assertEquals(UnitType.SOLDIER, UnitType.parse("剣兵"));
+        assertEquals(null, UnitType.parse("knight"));
+        assertEquals(null, UnitType.parse(null));
+        assertEquals(null, UnitType.parse("3")); // 数と取り違えない
     }
 }

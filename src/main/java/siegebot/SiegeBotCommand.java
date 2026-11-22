@@ -70,8 +70,9 @@ public final class SiegeBotCommand implements TabExecutor {
 
     private void help(CommandSender sender) {
         msg(sender, "コマンド一覧:");
-        msg(sender, "/sb revive <プレイヤー|@p|@a|bots|all> [数] - ボットを参戦させる（倒れていれば戻し、足りなければ出す。コマンドブロック用。数は 1 人あたりの体数）");
-        msg(sender, "/sb spawn <名前> <attack|defend> - 持ち主のいないボットを出す（出した地点を守る）");
+        msg(sender, "/sb revive <プレイヤー|@p|@a|bots|all> [数] [soldier|archer] - ボットを参戦させる（倒れていれば戻し、足りなければ出す。"
+                + "コマンドブロック用。数は 1 人あたりの体数。兵種を書くとその兵種だけを数えて出す）");
+        msg(sender, "/sb spawn <名前> <attack|defend> [soldier|archer] - 持ち主のいないボットを出す（出した地点を守る）");
         msg(sender, "/sb remove <名前> - ボットを消す");
         msg(sender, "/sb list - ボットの一覧");
         msg(sender, "/sb spawnpoint <attack|defend> [clear | x y z] - リスポーン地点を今いる場所（または座標）にする。clear で消す");
@@ -85,9 +86,10 @@ public final class SiegeBotCommand implements TabExecutor {
     // ---- ボットの出し入れ ----
 
     private void spawn(CommandSender sender, String[] args) {
-        Side side = args.length == 3 ? Side.parse(args[2]) : null;
-        if (side == null) {
-            msg(sender, "使い方: /sb spawn <名前> <attack|defend>");
+        Side side = args.length == 3 || args.length == 4 ? Side.parse(args[2]) : null;
+        UnitType type = args.length == 4 ? UnitType.parse(args[3]) : null;
+        if (side == null || (args.length == 4 && type == null)) {
+            msg(sender, "使い方: /sb spawn <名前> <attack|defend> [soldier|archer]");
             return;
         }
         String name = args[1];
@@ -96,15 +98,17 @@ public final class SiegeBotCommand implements TabExecutor {
             return;
         }
         Location fallback = sender instanceof Player p ? p.getLocation() : null;
-        SoldierBot bot = plugin.bots().spawn(name, side, fallback);
+        SoldierBot bot = plugin.bots().spawn(name, side, fallback, type);
         if (bot == null) {
             msg(sender, "同名のボットがいるか、出す場所がありません（リスポーン地点を設定するか、ゲーム内で実行してください）。");
             return;
         }
         plugin.data().bots().keySet().removeIf(k -> k.equalsIgnoreCase(name));
+        plugin.data().botTypes().keySet().removeIf(k -> k.equalsIgnoreCase(name));
         plugin.data().bots().put(name, side);
+        plugin.data().botTypes().put(name, bot.type());
         plugin.data().save();
-        msg(sender, "ボット " + name + "（" + side.label() + "）を出しました。" + bot.order().describe());
+        msg(sender, "ボット " + name + "（" + side.label() + "・" + bot.type().label() + "）を出しました。" + bot.order().describe());
     }
 
     /**
@@ -114,18 +118,31 @@ public final class SiegeBotCommand implements TabExecutor {
      *   <li>bots: /sb spawn で出した持ち主のいないボットのうち、倒れているものを蘇生する</li>
      *   <li>all: オンラインの全員の専用のボットと、持ち主のいないボット</li>
      * </ul>
-     * 最後の引数に数を書くと、1 人あたりその数までそろえる（足りなければ新しく出す）。省くと持っている全部を蘇生する。
+     * 数を書くと、1 人あたりその数までそろえる（足りなければ新しく出す）。省くと持っている全部を蘇生する。
+     * 兵種（soldier / archer）を書くと、その兵種だけを数えてそろえる（{@link BotManager#revive}）。数と兵種はどちらが先でもよい。
      */
     private void revive(CommandSender sender, String[] args) {
-        String usage = "使い方: /sb revive <プレイヤー|@p|@a|bots|all> [1人あたりの数]";
-        if (args.length != 2 && args.length != 3) {
+        String usage = "使い方: /sb revive <プレイヤー|@p|@a|bots|all> [1人あたりの数] [soldier|archer]";
+        if (args.length < 2 || args.length > 4) {
             msg(sender, usage);
             return;
         }
         Integer count = null;
-        if (args.length == 3) {
-            count = parseInt(args[2]);
-            if (count == null || count < 1) {
+        UnitType type = null;
+        for (int i = 2; i < args.length; i++) {
+            UnitType t = UnitType.parse(args[i]);
+            Integer c = parseInt(args[i]);
+            if (t != null && type == null) {
+                type = t;
+            } else if (c != null && count == null) {
+                count = c;
+            } else {
+                msg(sender, "「" + args[i] + "」が分かりません。数は 1 以上の整数、兵種は soldier（剣兵）か archer（弓兵）です。" + usage);
+                return;
+            }
+        }
+        if (count != null) {
+            if (count < 1) {
                 msg(sender, "数は 1 以上の整数で書いてください。" + usage);
                 return;
             }
@@ -161,28 +178,36 @@ public final class SiegeBotCommand implements TabExecutor {
         }
 
         List<String> parts = new ArrayList<>();
-        if (count != null && arg.equalsIgnoreCase("bots")) {
-            // bots は /sb spawn で出した持ち主のいないボットだけ。数は専用のボットの体数なので使わない
-            parts.add("bots は持ち主のいないボット（/sb spawn）を戻すだけで、数は使いません。"
-                    + "自分のボットを " + count + " 体にするなら /sb revive @s " + count);
+        if ((count != null || type != null) && arg.equalsIgnoreCase("bots")) {
+            // bots は /sb spawn で出した持ち主のいないボットだけ。数・兵種は専用のボットのためのものなので使わない
+            String extra = (count != null ? " " + count : "") + (type != null ? " " + type.key() : "");
+            parts.add("bots は持ち主のいないボット（/sb spawn）を戻すだけで、数と兵種は使いません。"
+                    + "自分のボットをそろえるなら /sb revive @s" + extra);
         }
+        int capped = 0;
         int spawned = 0;
         int revived = 0;
         int alive = 0;
         Map<BotManager.ReviveReport.Status, List<String>> failed = new LinkedHashMap<>();
         for (Player p : players) {
-            BotManager.ReviveReport r = plugin.bots().revive(p, count);
+            BotManager.ReviveReport r = plugin.bots().revive(p, count, type);
             if (r.status() == BotManager.ReviveReport.Status.OK) {
                 spawned += r.spawned();
                 revived += r.revived();
                 alive += r.alive();
+                capped += r.capped();
             } else if (!(all && r.status() == BotManager.ReviveReport.Status.NO_TEAM)) {
                 // all のときチーム外の人は数えない
                 failed.computeIfAbsent(r.status(), k -> new ArrayList<>()).add(p.getName());
             }
         }
         if (spawned + revived + alive > 0) {
-            parts.add("参戦 " + (spawned + revived) + "体（新しく " + spawned + "・倒れていた " + revived + "）・もともと参戦中 " + alive + "体");
+            parts.add((type == null ? "" : type.label() + "が") + "参戦 " + (spawned + revived) + "体（新しく " + spawned
+                    + "・倒れていた " + revived + "）・もともと参戦中 " + alive + "体");
+        }
+        if (capped > 0) {
+            parts.add("1 人あたりの上限（personal-bots.max-per-player: " + plugin.settings().maxBotsPerPlayer
+                    + "）に届いたので " + capped + "体は出せませんでした（ほかの兵種のボットも数に入ります）");
         }
         for (Map.Entry<BotManager.ReviveReport.Status, List<String>> e : failed.entrySet()) {
             String label = switch (e.getKey()) {
@@ -216,6 +241,7 @@ public final class SiegeBotCommand implements TabExecutor {
         String name = args[1];
         boolean removed = plugin.bots().remove(name);
         boolean saved = plugin.data().bots().keySet().removeIf(k -> k.equalsIgnoreCase(name));
+        plugin.data().botTypes().keySet().removeIf(k -> k.equalsIgnoreCase(name));
         if (saved) {
             plugin.data().save();
         }
@@ -230,7 +256,7 @@ public final class SiegeBotCommand implements TabExecutor {
         msg(sender, "ボット一覧:");
         for (SoldierBot b : plugin.bots().all()) {
             String owner = b.owner() == null ? "持ち主なし" : "持ち主 " + Bukkit.getOfflinePlayer(b.owner()).getName();
-            msg(sender, b.name() + " [" + b.side().label() + "・" + owner + "] " + b.order().describe()
+            msg(sender, b.name() + " [" + b.side().label() + "・" + b.type().label() + "・" + owner + "] " + b.order().describe()
                     + " / " + (b.alive() ? "生存" : "倒れている"));
         }
     }
@@ -411,7 +437,8 @@ public final class SiegeBotCommand implements TabExecutor {
             msg(sender, "ボットはいません。");
         }
         for (SoldierBot b : plugin.bots().all()) {
-            StringBuilder sb = new StringBuilder(b.name()).append(" [").append(b.side().key()).append("] ");
+            StringBuilder sb = new StringBuilder(b.name()).append(" [").append(b.side().key()).append("・")
+                    .append(b.type().key()).append("] ");
             if (!b.alive()) {
                 msg(sender, sb.append("倒れている").toString());
                 continue;
@@ -433,6 +460,10 @@ public final class SiegeBotCommand implements TabExecutor {
                 int c = plugin.combat().secondsLeft(bp); // CombatLog で戦闘中なら残りの秒数
                 sb.append(" combat=").append(c > 0 ? c + "s" : "なし");
                 sb.append(" shield=").append(plugin.shields().describe(b));
+                String bow = plugin.archers().describe(b);
+                if (bow != null) {
+                    sb.append(" bow=").append(bow);
+                }
             }
             msg(sender, sb.toString());
         }
@@ -465,11 +496,11 @@ public final class SiegeBotCommand implements TabExecutor {
         String sub = args[0].toLowerCase(Locale.ROOT);
         List<String> candidates = switch (n == 1 ? "" : sub) {
             case "" -> SUBS;
-            case "spawn" -> n == 3 ? SIDES : List.of();
+            case "spawn" -> n == 3 ? SIDES : n == 4 ? TYPES : List.of();
             case "remove", "tp" -> n == 2 ? botNames(false) : List.of();
             // bots は数を使わないので、数の候補は出さない
             case "revive" -> n == 2 ? reviveTargets()
-                    : n == 3 && !args[1].equalsIgnoreCase("bots") ? List.of("1", "2", "3") : List.of();
+                    : (n == 3 || n == 4) && !args[1].equalsIgnoreCase("bots") ? reviveExtras(args) : List.of();
             case "protect" -> n == 2 ? botNames(false) : n == 3 ? List.of("on", "off") : List.of();
             case "spawnpoint" -> n == 2 ? SIDES : n == 3 ? List.of("clear") : List.of();
             case "set" -> completeSet(args);
@@ -505,6 +536,26 @@ public final class SiegeBotCommand implements TabExecutor {
             return n == 5 ? STANCES : List.of();
         }
         return n == 4 ? STANCES : List.of();
+    }
+
+    private static final List<String> TYPES = List.of("soldier", "archer");
+
+    /** revive の 3・4 番目: まだ書いていない方（数・兵種）の候補。 */
+    private static List<String> reviveExtras(String[] args) {
+        boolean hasType = false;
+        boolean hasCount = false;
+        for (int i = 2; i < args.length - 1; i++) {
+            hasType |= UnitType.parse(args[i]) != null;
+            hasCount |= parseInt(args[i]) != null;
+        }
+        List<String> r = new ArrayList<>();
+        if (!hasCount) {
+            r.addAll(List.of("1", "2", "3"));
+        }
+        if (!hasType) {
+            r.addAll(TYPES);
+        }
+        return r;
     }
 
     private List<String> reviveTargets() {

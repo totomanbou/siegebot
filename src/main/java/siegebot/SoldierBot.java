@@ -12,6 +12,8 @@ public final class SoldierBot {
     final NPC npc;
     /** 持ち主のプレイヤー（専用のボット）。管理者が出したボットは null。 */
     final UUID owner;
+    /** 兵種（出したときに決まり、変わらない）。 */
+    final UnitType type;
 
     /** 今の方針。出すときに {@link BotManager} が決める（持ち主への追従か、出した地点を守る）。 */
     Order order;
@@ -38,11 +40,30 @@ public final class SoldierBot {
      */
     long retreatUntilTick;
 
-    SoldierBot(String name, Side side, NPC npc, UUID owner) {
+    // ---- 弓兵（{@link Archers} が使う） ----
+    /** 弓を引き始めた時刻（サーバーの tick）。引いていなければ -1。 */
+    long drawStartTick = -1;
+    /** 近すぎる敵から下がって歩いている途中なら true（keep-distance まで下がり切る）。 */
+    boolean archerBackingOff;
+    /** この時刻（サーバーの tick）まで次の矢を引き始めない。 */
+    long nextDrawTick;
+    /** 狙いの動きの見積もり用: 最後に見た狙いの位置・その時刻・その相手。 */
+    org.bukkit.Location aimLastPos;
+    long aimLastTick;
+    LivingEntity aimLastTarget;
+    /** 見積もった狙いの速さ（ブロック/tick）。 */
+    org.bukkit.util.Vector aimVelocity = new org.bukkit.util.Vector();
+
+    SoldierBot(String name, Side side, NPC npc, UUID owner, UnitType type) {
         this.name = name;
         this.side = side;
         this.npc = npc;
         this.owner = owner;
+        this.type = type;
+    }
+
+    public UnitType type() {
+        return type;
     }
 
     public UUID owner() {

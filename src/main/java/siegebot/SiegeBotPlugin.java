@@ -16,6 +16,8 @@ public final class SiegeBotPlugin extends JavaPlugin {
     private BukkitTask botTask;
     private BukkitTask shieldTask;
     private Shields shields;
+    private Archers archers;
+    private BukkitTask archerTask;
     private CombatCheck combat;
     private PlayerCommand playerCommand;
 
@@ -27,6 +29,7 @@ public final class SiegeBotPlugin extends JavaPlugin {
         data.load();
         bots = new BotManager(this);
         shields = new Shields(this);
+        archers = new Archers(this);
         combat = new CombatCheck(getLogger());
 
         Bukkit.getPluginManager().registerEvents(new GameListener(this), this);
@@ -62,6 +65,7 @@ public final class SiegeBotPlugin extends JavaPlugin {
         reloadConfig();
         settings = new Settings(getConfig());
         data.load();
+        archers.lowerAll();
         shields.lowerAll(); // 構えたままの遅い歩きを、新しい設定の速さに戻してから入れ直す
         startTasks();
         bots.reapplySettings();
@@ -77,12 +81,17 @@ public final class SiegeBotPlugin extends JavaPlugin {
             shieldTask.cancel();
         }
         shieldTask = Bukkit.getScheduler().runTaskTimer(this, () -> shields.tick(), 40L, Shields.TICK_PERIOD);
+        if (archerTask != null) {
+            archerTask.cancel();
+        }
+        archerTask = Bukkit.getScheduler().runTaskTimer(this, () -> archers.tick(), 40L, Archers.TICK_PERIOD);
     }
 
     /** /sb spawn で出したボット（持ち主なし）を、陣営のリスポーン地点に出す。 */
     private void spawnSavedBots() {
         for (Map.Entry<String, Side> e : data.bots().entrySet()) {
-            if (bots.get(e.getKey()) == null && bots.spawn(e.getKey(), e.getValue(), null) == null) {
+            if (bots.get(e.getKey()) == null
+                    && bots.spawn(e.getKey(), e.getValue(), null, data.botTypes().get(e.getKey())) == null) {
                 getLogger().warning("ボット " + e.getKey() + " を出せません（/sb spawnpoint "
                         + e.getValue().key() + " でリスポーン地点を設定してください）");
             }
@@ -102,6 +111,10 @@ public final class SiegeBotPlugin extends JavaPlugin {
     }
 
     /** 盾の構え方。 */
+    Archers archers() {
+        return archers;
+    }
+
     Shields shields() {
         return shields;
     }
