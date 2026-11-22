@@ -230,17 +230,19 @@ public final class CommandMenu implements Listener {
             ItemStack icon = unitIcon(t);
             put(h, slots[i], decorate(icon, t.label(), NamedTextColor.AQUA, lore), () -> {
                 BotManager.SummonResult r = plugin.bots().summon(p, t);
+                // 呼べたときは何も言わない（呼べなかったときだけ理由を知らせる）
                 String text = switch (r) {
-                    case SPAWNED -> t.label() + "を呼びました。";
+                    case SPAWNED -> null;
                     case NO_PICKS -> "呼べる回数が残っていません。";
                     case FULL -> "ボットの上限（" + max + " 体）に届いているので呼べません。";
                     case NO_TEAM -> "攻め・守りのどちらのチームにも入っていません。";
                     case DISABLED -> "専用のボットが無効なので、兵科選択は使えません。";
                     case NO_PLACE -> "出す場所がありません。";
                 };
-                boolean ok = r == BotManager.SummonResult.SPAWNED;
-                p.sendMessage(Component.text("[SiegeBot] ", NamedTextColor.GOLD)
-                        .append(Component.text(text, ok ? NamedTextColor.GREEN : NamedTextColor.RED)));
+                if (text != null) {
+                    p.sendMessage(Component.text("[SiegeBot] ", NamedTextColor.GOLD)
+                            .append(Component.text(text, NamedTextColor.RED)));
+                }
                 Side now = plugin.bots().sideOf(p);
                 if (now != null && plugin.bots().picks(p.getUniqueId()) > 0) {
                     openUnits(p, now);
