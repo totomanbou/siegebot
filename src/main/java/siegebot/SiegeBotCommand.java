@@ -119,7 +119,7 @@ public final class SiegeBotCommand implements TabExecutor {
      * ボットを出す・蘇生する。コマンドブロックのボタンから呼ぶ想定（ボットは自動では出ない・復活しない）。
      * <ul>
      *   <li>プレイヤー名・セレクタ（@p、@a、@a[team=atk] など）: その人の専用のボットをそろえる（{@link BotManager#revive}）</li>
-     *   <li>bots: /sb spawn で出した持ち主のいないボットのうち、倒れているものを蘇生する</li>
+     *   <li>bots: /sb spawn で出した持ち主のいないボットのうち、倒れて消えたものを出し直す（data.yml の一覧から）</li>
      *   <li>all: オンラインの全員の専用のボットと、持ち主のいないボット</li>
      * </ul>
      * 数を書くと、1 人あたりその数までそろえる（足りなければ新しく出す）。省くと持っている全部を蘇生する。
@@ -190,14 +190,12 @@ public final class SiegeBotCommand implements TabExecutor {
         }
         int capped = 0;
         int spawned = 0;
-        int revived = 0;
         int alive = 0;
         Map<BotManager.ReviveReport.Status, List<String>> failed = new LinkedHashMap<>();
         for (Player p : players) {
             BotManager.ReviveReport r = plugin.bots().revive(p, count, type);
             if (r.status() == BotManager.ReviveReport.Status.OK) {
                 spawned += r.spawned();
-                revived += r.revived();
                 alive += r.alive();
                 capped += r.capped();
             } else if (!(all && r.status() == BotManager.ReviveReport.Status.NO_TEAM)) {
@@ -205,9 +203,8 @@ public final class SiegeBotCommand implements TabExecutor {
                 failed.computeIfAbsent(r.status(), k -> new ArrayList<>()).add(p.getName());
             }
         }
-        if (spawned + revived + alive > 0) {
-            parts.add((type == null ? "" : type.label() + "が") + "参戦 " + (spawned + revived) + "体（新しく " + spawned
-                    + "・倒れていた " + revived + "）・もともと参戦中 " + alive + "体");
+        if (spawned + alive > 0) {
+            parts.add((type == null ? "" : type.label() + "が") + "参戦 " + spawned + "体・もともと参戦中 " + alive + "体");
         }
         if (capped > 0) {
             parts.add("1 人あたりの上限（personal-bots.max-per-player: " + plugin.settings().maxBotsPerPlayer
@@ -224,11 +221,7 @@ public final class SiegeBotCommand implements TabExecutor {
         }
         int adminRevived = 0;
         if (all || arg.equalsIgnoreCase("bots")) {
-            for (SoldierBot b : plugin.bots().all()) {
-                if (b.owner() == null && plugin.bots().reviveBot(b)) {
-                    adminRevived++;
-                }
-            }
+            adminRevived = plugin.spawnSavedBots(); // 倒れて消えた /sb spawn のボットを、data.yml から出し直す
         }
 
         if (all || arg.equalsIgnoreCase("bots")) {

@@ -54,6 +54,15 @@ public final class GameListener implements Listener {
         }
     }
 
+    /** 倒れたボットはすぐ消す（蘇生しない。指揮メニューの一覧からも外れる）。 */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onBotDied(org.bukkit.event.entity.PlayerDeathEvent event) {
+        SoldierBot bot = plugin.bots().byEntity(event.getEntity());
+        if (bot != null) {
+            plugin.bots().onBotDied(bot);
+        }
+    }
+
     /** ボットがダメージを受けた時刻を覚える（自動の回復を regen-delay-seconds 止めるため）。 */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBotDamaged(org.bukkit.event.entity.EntityDamageEvent event) {

@@ -68,8 +68,7 @@ public final class CommandMenu implements Listener {
             SoldierBot own = choices.isEmpty() ? null : choices.get(0);
             who = own == null ? "自分のボット" : own.name();
             List<String> lore = own == null ? List.of("まだ出ていない")
-                    : List.of(own.type().label() + "・今: " + own.order().describe(),
-                            own.alive() ? "生存" : "倒れている（コマンドブロックで参戦）");
+                    : List.of(own.type().label() + "・今: " + own.order().describe());
             put(h, 4, button(icon(own), who, NamedTextColor.AQUA, false, lore), () -> open(p, side));
         } else {
             List<SoldierBot> mine = choices;
@@ -82,7 +81,6 @@ public final class CommandMenu implements Listener {
             for (int i = 0; i < mine.size() && i < 8; i++) {
                 SoldierBot b = mine.get(i);
                 List<String> lore = List.of(b.type().label() + "・今: " + b.order().describe(),
-                        b.alive() ? "生存" : "倒れている（コマンドブロックで参戦）",
                         "押すとこのボットだけに指示する");
                 put(h, 1 + i, button(icon(b), b.name() + " に指示", NamedTextColor.AQUA,
                         b.name().equals(sel), lore), () -> {
@@ -218,21 +216,15 @@ public final class CommandMenu implements Listener {
         UnitType[] types = {UnitType.SOLDIER, UnitType.SPEARMAN, UnitType.ARCHER};
         for (int i = 0; i < types.length; i++) {
             UnitType t = types[i];
-            int alive = 0;
-            int down = 0;
+            int have = 0;
             for (SoldierBot b : mine) {
                 if (b.type() == t) {
-                    if (b.alive()) {
-                        alive++;
-                    } else {
-                        down++;
-                    }
+                    have++;
                 }
             }
             List<String> lore = new ArrayList<>();
-            lore.add("持っている: 参戦中 " + alive + " 体" + (down > 0 ? "・倒れている " + down + " 体" : ""));
+            lore.add("持っている: " + have + " 体");
             lore.add(left <= 0 ? "呼べる回数が残っていない"
-                    : down > 0 ? "押すと 1 回使って、倒れている" + t.label() + "を戻す"
                     : mine.size() >= max ? "上限（" + max + " 体）に届いているので呼べない"
                     : "押すと 1 回使って、" + t.label() + "を 1 体呼ぶ");
             ItemStack icon = unitIcon(t);
@@ -240,14 +232,13 @@ public final class CommandMenu implements Listener {
                 BotManager.SummonResult r = plugin.bots().summon(p, t);
                 String text = switch (r) {
                     case SPAWNED -> t.label() + "を呼びました。";
-                    case REVIVED -> "倒れていた" + t.label() + "を戻しました。";
                     case NO_PICKS -> "呼べる回数が残っていません。";
                     case FULL -> "ボットの上限（" + max + " 体）に届いているので呼べません。";
                     case NO_TEAM -> "攻め・守りのどちらのチームにも入っていません。";
                     case DISABLED -> "専用のボットが無効なので、兵科選択は使えません。";
                     case NO_PLACE -> "出す場所がありません。";
                 };
-                boolean ok = r == BotManager.SummonResult.SPAWNED || r == BotManager.SummonResult.REVIVED;
+                boolean ok = r == BotManager.SummonResult.SPAWNED;
                 p.sendMessage(Component.text("[SiegeBot] ", NamedTextColor.GOLD)
                         .append(Component.text(text, ok ? NamedTextColor.GREEN : NamedTextColor.RED)));
                 Side now = plugin.bots().sideOf(p);

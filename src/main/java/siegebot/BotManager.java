@@ -248,11 +248,10 @@ public final class BotManager {
      *
      * @param status  OK なら下の数が意味を持つ
      * @param spawned 新しく出した数
-     * @param revived 倒れていたのを蘇生した数
-     * @param alive   もともと生きていた数（何もしなかった）
+     * @param alive   もともと参戦していた数（何もしなかった）
      * @param capped  1 人あたりの上限（max-per-player）のせいで出せなかった数
      */
-    public record ReviveReport(Status status, int spawned, int revived, int alive, int capped) {
+    public record ReviveReport(Status status, int spawned, int alive, int capped) {
         public enum Status {
             OK,
             /** 攻め・守りのどちらのチームにも入っていない */
@@ -264,20 +263,19 @@ public final class BotManager {
         }
 
         static ReviveReport of(Status s) {
-            return new ReviveReport(s, 0, 0, 0, 0);
+            return new ReviveReport(s, 0, 0, 0);
         }
     }
 
     /**
-     * プレイヤーの専用のボットを count 体そろえる。持っているボットのうち倒れているものを蘇生し（方針はそのまま）、
-     * 足りなければ新しく出す（持ち主に追従）。出す場所は陣営のリスポーン地点、未設定ならプレイヤーのいる所。
+     * プレイヤーの専用のボットを count 体そろえる。足りない分を新しく出す（持ち主に追従）。
+     * 倒れたボットはすぐ消える（{@link #onBotDied}）ので、蘇生はしない。出す場所は陣営のリスポーン地点、未設定ならプレイヤーのいる所。
      *
-     * <p>count が null なら「持っている全部を蘇生する（1 体もなければ 1 体出す）」。count は 1〜max-per-player に収める。
-     * count より多く持っているときは、多い分には手を付けない（消さない・蘇生しない）。
+     * <p>count が null なら「1 体もいなければ 1 体出す」。count は 1〜max-per-player に収める。
+     * count より多く持っているときは、多い分には手を付けない（消さない）。
      *
-     * <p>type を指定すると、その兵種だけを数える: その兵種のボットを count 体そろえる（倒れていれば戻し、足りなければ
-     * その兵種で出す）。ほかの兵種のボットには手を付けない。全兵種の合計は max-per-player を超えない。
-     * type が null なら兵種を問わず数え、新しく出すのは units.default の兵種。
+     * <p>type を指定すると、その兵種だけを数える: その兵種のボットを count 体にそろえる。ほかの兵種のボットには
+     * 手を付けない。全兵種の合計は max-per-player を超えない。type が null なら兵種を問わず数え、新しく出すのは units.default の兵種。
      */
     public ReviveReport revive(Player p, Integer count, UnitType type) {
         if (!plugin.settings().personalBots) {
@@ -288,8 +286,8 @@ public final class BotManager {
             return ReviveReport.of(ReviveReport.Status.NO_TEAM);
         }
         for (SoldierBot old : ownedBy(p.getUniqueId())) {
-            if (old.side != side) {
-                remove(old.name); // チームを移った後の古いボット
+            if (old.side != side || !old.npc.isSpawned()) {
+                remove(old.name); // チームを移った後の古いボットと、倒れた（消えそこねた）ボット
             }
         }
         List<SoldierBot> all = ownedBy(p.getUniqueId());
@@ -308,18 +306,8 @@ public final class BotManager {
         toSpawn -= capped;
 
         int spawned = 0;
-        int revived = 0;
-        int alive = 0;
+        int alive = Math.min(want, mine.size());
         SoldierBot voice = null;
-        for (int i = 0; i < Math.min(want, mine.size()); i++) {
-            SoldierBot b = mine.get(i);
-            if (b.npc.isSpawned()) {
-                alive++;
-            } else if (reviveBot(b, false)) {
-                revived++;
-                voice = voice == null ? b : voice;
-            }
-        }
         UnitType newType = type == null ? plugin.settings().defaultUnit : type;
         for (int i = 0; i < toSpawn; i++) {
             SoldierBot b = spawn(personalName(p.getName(), newType), side, p.getLocation(), p.getUniqueId(), p.getName(),
@@ -331,13 +319,12 @@ public final class BotManager {
             voice = voice == null ? b : voice;
         }
         if (voice != null) {
-            // 新しく出したのも倒れていたのも、どちらも「参戦」と言う
-            say(voice, p.getName() + " の兵、" + (spawned + revived) + " 体参戦した");
+            say(voice, p.getName() + " の兵、" + spawned + " 体参戦した");
         }
-        if (spawned + revived + alive == 0 && capped == 0) {
+        if (spawned + alive == 0 && capped == 0) {
             return ReviveReport.of(ReviveReport.Status.NO_PLACE);
         }
-        return new ReviveReport(ReviveReport.Status.OK, spawned, revived, alive, capped);
+        return new ReviveReport(ReviveReport.Status.OK, spawned, alive, capped);
     }
 
     // ---- 兵科選択（呼べる回数を使って、兵種を選んで 1 体ずつ呼ぶ） ----
@@ -366,11 +353,9 @@ public final class BotManager {
     public enum SummonResult {
         /** 新しく出した */
         SPAWNED,
-        /** 倒れていたその兵種のボットを戻した */
-        REVIVED,
         /** 呼べる回数が残っていない */
         NO_PICKS,
-        /** 1 人あたりの上限（max-per-player）に届いていて、その兵種の倒れたボットもいない */
+        /** 1 人あたりの上限（max-per-player）に届いている */
         FULL,
         /** 攻め・守りのどちらのチームにも入っていない */
         NO_TEAM,
@@ -381,8 +366,7 @@ public final class BotManager {
     }
 
     /**
-     * 兵科選択: 呼べる回数を 1 使って、その兵種のボットを 1 体参戦させる。
-     * その兵種の倒れているボットがいれば戻し（方針はそのまま）、いなければ新しく出す（上限 max-per-player まで）。
+     * 兵科選択: 呼べる回数を 1 使って、その兵種のボットを 1 体新しく出す（上限 max-per-player まで）。
      * 呼べなかったときは回数を使わない。
      */
     public SummonResult summon(Player p, UnitType type) {
@@ -397,18 +381,11 @@ public final class BotManager {
             return SummonResult.NO_PICKS;
         }
         for (SoldierBot old : ownedBy(p.getUniqueId())) {
-            if (old.side != side) {
-                remove(old.name); // チームを移った後の古いボット
+            if (old.side != side || !old.npc.isSpawned()) {
+                remove(old.name); // チームを移った後の古いボットと、倒れた（消えそこねた）ボット
             }
         }
         List<SoldierBot> mine = ownedBy(p.getUniqueId());
-        for (SoldierBot b : mine) {
-            if (b.type == type && !b.npc.isSpawned() && reviveBot(b, false)) {
-                setPicks(p.getUniqueId(), picks(p.getUniqueId()) - 1);
-                say(b, type.label() + "、参戦した");
-                return SummonResult.REVIVED;
-            }
-        }
         if (mine.size() >= plugin.settings().maxBotsPerPlayer) {
             return SummonResult.FULL;
         }
@@ -421,25 +398,16 @@ public final class BotManager {
         return SummonResult.SPAWNED;
     }
 
-    /** 倒れているボットを出し直す（方針はそのまま）。生きていれば何もせず false。 */
-    public boolean reviveBot(SoldierBot bot) {
-        return reviveBot(bot, true);
-    }
-
-    private boolean reviveBot(SoldierBot bot, boolean announce) {
-        if (bot.npc.isSpawned()) {
-            return false;
-        }
-        Location at = respawnLocation(bot);
-        if (at == null || !bot.npc.spawn(at, SpawnReason.RESPAWN)) {
-            return false;
-        }
-        bot.target = null;
-        applyMaxHealth(bot, true);
-        if (announce) {
-            say(bot, "参戦した");
-        }
-        return true;
+    /**
+     * ボットが倒れたら、すぐ（次の tick に）消す。指揮メニューの一覧からも外れる。蘇生はしない
+     * （/sb revive・兵科選択で新しく出す）。/sb spawn で出したボットは data.yml に残るので、/sb revive bots で出し直せる。
+     */
+    public void onBotDied(SoldierBot bot) {
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            if (bots.get(bot.name.toLowerCase(Locale.ROOT)) == bot && !bot.npc.isSpawned()) {
+                remove(bot.name);
+            }
+        });
     }
 
     /** 持ち主の専用のボットの方針を、出したときと同じ「持ち主についていく・持ち場優先」に戻す。 */
@@ -450,7 +418,7 @@ public final class BotManager {
         }
     }
 
-    /** 持ち主が倒れたら、その専用のボットを全部倒す。倒れたボットは /sb revive まで倒れたまま。 */
+    /** 持ち主が倒れたら、その専用のボットを全部倒す（倒れたボットはすぐ消える）。 */
     public void killOwnedBots(UUID owner) {
         for (SoldierBot b : ownedBy(owner)) {
             if (b.npc.isSpawned() && b.npc.getEntity() instanceof LivingEntity le) {
@@ -714,19 +682,6 @@ public final class BotManager {
     public Location spawnLocation(Side side) {
         Point p = plugin.data().spawns().get(side);
         return p == null ? null : p.toLocation();
-    }
-
-    /** 倒れたボットを出し直す場所: リスポーン地点、なければ持ち主の横、なければ最後にいた所。 */
-    private Location respawnLocation(SoldierBot bot) {
-        Location l = spawnLocation(bot.side);
-        if (l != null) {
-            return l;
-        }
-        Player owner = bot.owner == null ? null : Bukkit.getPlayer(bot.owner);
-        if (owner != null && !owner.isDead()) {
-            return owner.getLocation();
-        }
-        return bot.npc.getStoredLocation();
     }
 
     /**

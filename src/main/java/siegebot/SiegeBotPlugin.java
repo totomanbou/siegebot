@@ -105,15 +105,24 @@ public final class SiegeBotPlugin extends JavaPlugin {
         chaseTask = Bukkit.getScheduler().runTaskTimer(this, () -> bots.checkChasePaths(), 40L, BotManager.CHASE_CHECK_PERIOD);
     }
 
-    /** /sb spawn で出したボット（持ち主なし）を、陣営のリスポーン地点に出す。 */
-    private void spawnSavedBots() {
+    /**
+     * /sb spawn で出したボット（持ち主なし）のうち、今いないものを陣営のリスポーン地点に出す。
+     * 起動時と、/sb revive bots・all（倒れて消えたものを出し直す）で呼ぶ。出した数を返す。
+     */
+    public int spawnSavedBots() {
+        int n = 0;
         for (Map.Entry<String, Side> e : data.bots().entrySet()) {
-            if (bots.get(e.getKey()) == null
-                    && bots.spawn(e.getKey(), e.getValue(), null, data.botTypes().get(e.getKey())) == null) {
+            if (bots.get(e.getKey()) != null) {
+                continue;
+            }
+            if (bots.spawn(e.getKey(), e.getValue(), null, data.botTypes().get(e.getKey())) != null) {
+                n++;
+            } else {
                 getLogger().warning("ボット " + e.getKey() + " を出せません（/sb spawnpoint "
                         + e.getValue().key() + " でリスポーン地点を設定してください）");
             }
         }
+        return n;
     }
 
     public Settings settings() {
