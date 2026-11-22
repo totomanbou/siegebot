@@ -11,8 +11,8 @@
 
 ## 導入
 
-1. [Releases](../../releases) から `SiegeBot-0.7.0.jar` を取ってくるか、自分でビルドします（下の「ビルド」）。
-2. サーバーの `plugins` フォルダに、Citizens の jar と `SiegeBot-0.7.0.jar` を入れて起動します。
+1. [Releases](../../releases) から `SiegeBot-0.8.0.jar` を取ってくるか、自分でビルドします（下の「ビルド」）。
+2. サーバーの `plugins` フォルダに、Citizens の jar と `SiegeBot-0.8.0.jar` を入れて起動します。
    指揮棒を使うなら、ItemJoin の jar も入れ、[`itemjoin/items.yml`](itemjoin/items.yml) を `plugins/ItemJoin/items.yml` に置きます。
 3. `plugins/SiegeBot/config.yml` の `teams.attack` / `teams.defend` を、攻め・守りのスコアボードのチーム名（`/team` で作ったチームの名前）に合わせ、`/sb reload` で読み直します。
    既定は `Attack` と `Defence` です。SiegeBot は大文字・小文字を区別せずに比べますが、コマンドのセレクタ（`@a[team=Attack]`）は区別するので、チーム名はそろえておくのが安全です。
@@ -262,7 +262,7 @@ Java 25 と Maven 3.9 以降が必要です。
 mvn package
 ```
 
-`target/SiegeBot-0.7.0.jar` ができます（単体テストも走ります）。
+`target/SiegeBot-0.8.0.jar` ができます（単体テストも走ります）。
 Windows では `build.cmd package` でも同じです（`tools/apache-maven-*` に Maven を置けばそれを、なければ PATH の `mvn` を使います）。
 
 ## リポジトリの中身
