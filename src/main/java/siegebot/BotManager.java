@@ -494,15 +494,36 @@ public final class BotManager {
         }
     }
 
-    /** 装備のアイテム（設定のアイテムを写したもの）。盾は壊れないようにする（構えるたびに耐久が減るため）。 */
+    /** 装備のアイテム（設定のアイテムを写したもの）。盾はプレイヤーと同じく、防ぐと削れて壊れる（補充しない）。 */
     private static ItemStack equipmentItem(ItemStack template) {
-        ItemStack item = template.clone();
-        if (item.getType() == Material.SHIELD) {
-            ItemMeta meta = item.getItemMeta();
-            meta.setUnbreakable(true);
-            item.setItemMeta(meta);
+        return template.clone();
+    }
+
+    /**
+     * ボットの左手の盾が削れた・壊れたら、Citizens の装備にも写す（写さないと Citizens が元の盾に戻す）。
+     * damage は今回削れる量（null なら左手をそのまま写す）。壊れたら左手は空のまま（補充しない）。
+     */
+    public void syncOffHand(SoldierBot bot, ItemStack before, Integer damage) {
+        if (!(bot.npc.getEntity() instanceof Player p)) {
+            return;
         }
-        return item;
+        ItemStack now;
+        if (before != null && damage != null) {
+            now = before.clone();
+            if (now.getItemMeta() instanceof org.bukkit.inventory.meta.Damageable d) {
+                int next = d.getDamage() + damage;
+                if (next >= now.getType().getMaxDurability()) {
+                    now = null; // 壊れた
+                } else {
+                    d.setDamage(next);
+                    now.setItemMeta(d);
+                }
+            }
+        } else {
+            ItemStack off = p.getInventory().getItemInOffHand();
+            now = off.getType() == Material.AIR ? null : off.clone();
+        }
+        bot.npc.getOrAddTrait(Equipment.class).set(Equipment.EquipmentSlot.OFF_HAND, now);
     }
 
     private static Equipment.EquipmentSlot slotOf(String key) {

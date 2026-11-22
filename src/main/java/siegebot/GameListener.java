@@ -54,6 +54,26 @@ public final class GameListener implements Listener {
         }
     }
 
+    /** ボットの盾が削れたら、Citizens の装備にも写す（写さないと元の盾に戻る）。1 tick 後にもう一度、実際の左手を写す。 */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onBotItemDamage(org.bukkit.event.player.PlayerItemDamageEvent event) {
+        SoldierBot bot = plugin.bots().byEntity(event.getPlayer());
+        if (bot == null || event.getItem().getType() != org.bukkit.Material.SHIELD) {
+            return;
+        }
+        plugin.bots().syncOffHand(bot, event.getItem(), event.getDamage());
+        org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> plugin.bots().syncOffHand(bot, null, null));
+    }
+
+    /** ボットの盾が壊れたら、Citizens の装備からも外す（補充しない）。 */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onBotItemBreak(org.bukkit.event.player.PlayerItemBreakEvent event) {
+        SoldierBot bot = plugin.bots().byEntity(event.getPlayer());
+        if (bot != null && event.getBrokenItem().getType() == org.bukkit.Material.SHIELD) {
+            org.bukkit.Bukkit.getScheduler().runTask(plugin, () -> plugin.bots().syncOffHand(bot, null, null));
+        }
+    }
+
     /** 倒れたボットはすぐ消す（蘇生しない。指揮メニューの一覧からも外れる）。 */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onBotDied(org.bukkit.event.entity.PlayerDeathEvent event) {
