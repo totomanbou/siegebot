@@ -79,19 +79,28 @@ final class Shields {
             lower(bot, p, s); // 退却中は構えない（戦わずに戻る）
             return;
         }
-        boolean busy = p.hasCooldown(Material.SHIELD) || meleeBusy(bot, p, s);
-        if (busy) {
+        if (p.hasCooldown(Material.SHIELD)) {
+            lower(bot, p, s); // 斧で盾を使えなくされた
+            return;
+        }
+        // 殴り合いの最中は構えない。ただし槍兵は、飛んでくる矢（飛び道具）だけは殴り合いの最中も防ぐ（突くより優先）
+        boolean melee = meleeBusy(bot, p, s);
+        boolean projectilesOnly = melee && bot.type == UnitType.SPEARMAN;
+        if (melee && !projectilesOnly) {
             lower(bot, p, s);
             return;
         }
-        Threat threat = findThreat(bot, p, s, enemyCache.computeIfAbsent(bot.side, plugin.bots()::enemies));
+        Threat threat = findThreat(bot, p, s, enemyCache.computeIfAbsent(bot.side, plugin.bots()::enemies),
+                projectilesOnly);
         if (threat != null) {
             bot.lastThreatTick = now;
             bot.blockLook = threat.look();
         }
         boolean using = usingShield(p);
+        // 槍兵は脅威がなくなったらすぐ下ろす（units.spearman.shield-lower-after-seconds、既定 0）
+        int lowerAfter = bot.type == UnitType.SPEARMAN ? s.spearShieldLowerAfterTicks : s.shieldLowerAfterTicks;
         boolean want = threat != null
-                || ((bot.shieldUp || using) && now - bot.lastThreatTick < s.shieldLowerAfterTicks);
+                || ((bot.shieldUp || using) && now - bot.lastThreatTick < lowerAfter);
         if (!want) {
             lower(bot, p, s);
             return;
@@ -106,7 +115,13 @@ final class Shields {
         } else if (!using && bot.shieldUp) {
             applyLowered(bot, s); // 斧などで盾が下ろされた。次の判断でもう一度構える
         }
-        if (using && bot.blockLook != null && !bot.npc.getNavigator().isNavigating()) {
+        if (using && bot.blockLook != null && bot.type == UnitType.SPEARMAN) {
+            // 槍兵は防ぐのを優先: 歩いていても止まって矢の方を向く（歩いている間は Citizens が歩く向きを向かせるため）
+            if (bot.npc.getNavigator().isNavigating()) {
+                bot.npc.getNavigator().cancelNavigation();
+            }
+            bot.npc.faceLocation(bot.blockLook);
+        } else if (using && bot.blockLook != null && !bot.npc.getNavigator().isNavigating()) {
             bot.npc.faceLocation(bot.blockLook);
         }
     }
@@ -281,8 +296,9 @@ final class Shields {
 
     // ---- 脅威の検出 ----
 
-    /** いちばん近い脅威（飛んでくる矢・自分を狙う敵）。なければ null。 */
-    private Threat findThreat(SoldierBot bot, Player p, Settings s, List<LivingEntity> enemies) {
+    /** いちばん近い脅威（飛んでくる矢・自分を狙う敵）。projectilesOnly なら飛んでくる矢だけ。なければ null。 */
+    private Threat findThreat(SoldierBot bot, Player p, Settings s, List<LivingEntity> enemies,
+                              boolean projectilesOnly) {
         double r = s.shieldDetectRadius;
         double r2 = r * r;
         Location here = p.getLocation();
@@ -318,7 +334,7 @@ final class Shields {
             best = new Threat(look, d2);
         }
 
-        for (LivingEntity e : enemies) {
+        for (LivingEntity e : projectilesOnly ? List.<LivingEntity>of() : enemies) {
             if (e.getWorld() != p.getWorld() || !e.isValid() || e.isDead()) {
                 continue;
             }

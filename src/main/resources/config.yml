@@ -107,12 +107,13 @@ units:
       chestplate: IRON_CHESTPLATE
       leggings: IRON_LEGGINGS
       boots: IRON_BOOTS
-  # 槍兵: 届く距離が長く（attack-range）、届くぎりぎりの所から突く。盾は持たない
+  # 槍兵: 届く距離が長く（attack-range）、届くぎりぎりの所から突く。殴り合いの最中も、飛んでくる矢は盾で防ぐ（突くより優先）
   spearman:
     name-suffix: "の槍兵"
     equipment:
       # 本サーバーのリソースパックで槍の見た目になる鉄の斧（custom_model_data の文字 "1"）
       hand: 'minecraft:iron_axe[custom_model_data={strings:["1"]}]'
+      off_hand: SHIELD
       helmet: IRON_HELMET
       chestplate: IRON_CHESTPLATE
       leggings: CHAINMAIL_LEGGINGS
@@ -125,6 +126,8 @@ units:
     stop-inside: 0.2
     # 敵が届く距離よりこれだけ内側まで寄ってきたら（1.5 なら 3.0 より近い）、届くぎりぎりまで下がる
     back-off-inside: 1.5
+    # 矢などの脅威がなくなってから盾を下ろすまでの秒数（0 ですぐ下ろす。剣兵は shield.lower-after-seconds）
+    shield-lower-after-seconds: 0
   # 弓兵: 離れた所から矢を撃つ。矢は尽きず、拾えない
   archer:
     name-suffix: "の弓兵"

@@ -9,7 +9,7 @@ import org.bukkit.entity.Player;
  * 槍兵が届くぎりぎりの所から突く。毎 tick、狙い（{@link SoldierBot#target}）について:
  * 届けば（目から相手の箱まで units.spearman.attack-range 以内）相手を向いて attack-delay-ticks ごとに突き、
  * 近づいている途中なら、届く距離より stop-inside だけ内側に入った所で止める（行動の判断の 10 tick を待つと寄りすぎる）。
- * 下がっている途中・退却中は突かない。
+ * 下がっている途中・退却中・盾を構えている間は突かない（盾は {@link Shields}。槍兵は殴り合いの最中も飛んでくる矢を防ぐ）。
  *
  * <p>近づく・下がるの判断は {@link BotManager} が行う（10 tick ごと）。メインスレッドからだけ呼ぶ。
  */
@@ -46,6 +46,9 @@ final class Spearmen {
         Navigator nav = bot.npc.getNavigator();
         if (bot.backingOff && nav.isNavigating()) {
             return; // 下がっている途中は向かない（プレイヤーの姿の NPC は向いている方へ歩く）
+        }
+        if (bot.shieldUp || (p.hasActiveItem() && p.getActiveItemHand() == org.bukkit.inventory.EquipmentSlot.OFF_HAND)) {
+            return; // 盾で防いでいる間は突かない・相手を向かない（盾は向いている側しか防げない）
         }
         Settings.Unit unit = s.unit(UnitType.SPEARMAN);
         double d = BotManager.reachDistance(p, t);

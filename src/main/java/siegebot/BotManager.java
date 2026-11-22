@@ -823,6 +823,9 @@ public final class BotManager {
      * 届くかは、目から相手の当たり判定の箱までの距離（{@link #reachDistance}）で比べる（プレイヤーのリーチと同じ測り方）。
      */
     private void spearMove(SoldierBot bot, Navigator nav, LivingEntity self, LivingEntity target, Settings s) {
+        if (bot.shieldUp) {
+            return; // 盾で矢を防いでいる間は動かない（Shields が止めて矢の方を向かせている）
+        }
         double reach = s.unit(UnitType.SPEARMAN).attackRange;
         double d = reachDistance(self, target);
         if (d <= reach && self.hasLineOfSight(target)) {
