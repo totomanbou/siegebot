@@ -842,7 +842,9 @@ public final class BotManager {
         double d = here.distance(t);
         boolean los = self.hasLineOfSight(target);
         if (los && d <= s.archerRange) {
-            if (d < s.archerMinDistance) {
+            // 近すぎる敵から下がるのは積極的のときだけ。持ち場優先では逃げずに、その場で撃ち続ける
+            boolean guard = bot.order != null && bot.order.stance() == Order.Stance.GUARD;
+            if (d < s.archerMinDistance && !guard) {
                 Location away = retreatSpot(here, t, s.archerKeepDistance - d);
                 if (away != null) {
                     Location dest = nav.isNavigating() ? nav.getTargetAsLocation() : null;
