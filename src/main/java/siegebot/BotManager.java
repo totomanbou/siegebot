@@ -57,6 +57,11 @@ public final class BotManager {
     /** 追う道に蜘蛛の巣があるかを調べる間隔（tick）と、見つけた敵を追わないでおく長さ（tick）。 */
     public static final int CHASE_CHECK_PERIOD = 2;
     static final int WEB_BLOCK_TICKS = 40;
+    /** 横隊の間隔（ブロック）と、1 列に並べる最大の人数（これより多ければ 2 列）。 */
+    static final double FORMATION_SPACING = 1.6;
+    static final int FORMATION_ROW_MAX = 5;
+    /** 横隊の自分の位置にこの距離まで寄れば着いたとする（ブロック）。 */
+    static final double FORMATION_ARRIVE = 0.6;
     /** 見えていなくても気づく距離。 */
     private static final double SENSE_RADIUS = 5.0;
     /** この距離の敵には、持ち場からの距離（leash）に関係なく応戦する。 */
@@ -693,16 +698,126 @@ public final class BotManager {
         if (o == null) {
             return null;
         }
+        Location base;
+        Player leader = null;
         if (o.mode() == Order.Mode.FOLLOW) {
             // 敵の陣営でなければ追う（チームに入っていないプレイヤーも追える）
             Player p = Bukkit.getPlayerExact(o.player());
-            if (p != null && !p.isDead() && sideOf(p) != bot.side.opposite()) {
-                return groundBelow(p.getLocation());
+            if (p == null || p.isDead() || sideOf(p) == bot.side.opposite()) {
+                bot.inFormation = false;
+                return null;
             }
-            return null;
+            leader = p;
+            base = groundBelow(p.getLocation());
+        } else {
+            Location l = o.point().toLocation();
+            if (l == null) {
+                bot.inFormation = false;
+                return null;
+            }
+            base = groundBelow(l);
         }
-        Location l = o.point().toLocation();
-        return l == null ? null : groundBelow(l);
+        return formationSlot(bot, base, leader);
+    }
+
+    /**
+     * 横隊の中の自分の位置。同じ持ち場（同じ陣営で、同じ人に追従・同じ地点を守る）の参戦中のボットを出した順に並べ、
+     * 5 人までは 1 列、それより多ければ 2 列（前の列が多め）の横隊にする。間隔は {@link #FORMATION_SPACING}。
+     * <ul>
+     *   <li>追従: 相手の向き（45 度ごとに丸める）の follow-distance 後ろに横隊（2 列目はさらに後ろ）</li>
+     *   <li>守れ: 地点を 1 列目の真ん中にし、指示した人が見ていた向き（なければ敵のリスポーン地点の方）を向く横隊</li>
+     * </ul>
+     * 1 体だけなら今までどおり base（相手の足元・守る地点）。横隊の位置に立てなければ base。
+     */
+    private Location formationSlot(SoldierBot bot, Location base, Player leader) {
+        List<SoldierBot> group = new ArrayList<>();
+        for (SoldierBot b : bots.values()) {
+            if (b.side == bot.side && b.npc.isSpawned() && sameStation(b.order, bot.order)) {
+                group.add(b);
+            }
+        }
+        int n = group.size();
+        int idx = group.indexOf(bot);
+        if (n <= 1 || idx < 0) {
+            bot.inFormation = false;
+            return base;
+        }
+        bot.inFormation = true;
+        int perRow = n <= FORMATION_ROW_MAX ? n : (n + 1) / 2;
+        int row = idx / perRow;
+        int col = idx % perRow;
+        int inRow = Math.min(perRow, n - row * perRow);
+        double lateral = (col - (inRow - 1) / 2.0) * FORMATION_SPACING;
+
+        double yaw;
+        double back;
+        if (leader != null) {
+            yaw = Math.round(leader.getLocation().getYaw() / 45.0) * 45.0; // 少し向きを変えただけで並び直さない
+            back = Math.max(1.5, plugin.settings().followDistance) + row * FORMATION_SPACING;
+        } else {
+            Float fixed = null;
+            for (SoldierBot b : group) {
+                if (b.holdYaw != null) {
+                    fixed = b.holdYaw; // 同じ地点の横隊は最初のボットの向きにそろえる
+                    break;
+                }
+            }
+            yaw = fixed != null ? fixed : yawToward(base, spawnLocation(bot.side.opposite()));
+            back = row * FORMATION_SPACING;
+        }
+        double rad = Math.toRadians(yaw);
+        double fx = -Math.sin(rad); // Minecraft の向き: yaw 0 が +Z、90 が -X
+        double fz = Math.cos(rad);
+        double x = base.getX() - fx * back - fz * lateral;
+        double z = base.getZ() - fz * back + fx * lateral;
+        Location slot = standNear(base.getWorld(), x, base.getY(), z);
+        return slot != null ? slot : base;
+    }
+
+    /** 同じ持ち場か（同じ人に追従・同じ地点を守る）。 */
+    private static boolean sameStation(Order a, Order b) {
+        if (a == null || b == null || a.mode() != b.mode()) {
+            return false;
+        }
+        if (a.mode() == Order.Mode.FOLLOW) {
+            return a.player().equalsIgnoreCase(b.player());
+        }
+        return a.point().equals(b.point());
+    }
+
+    /** from から to を向く yaw（度）。to がなければ 0（+Z）。 */
+    private static double yawToward(Location from, Location to) {
+        if (to == null || to.getWorld() != from.getWorld()) {
+            return 0;
+        }
+        double dx = to.getX() - from.getX();
+        double dz = to.getZ() - from.getZ();
+        if (dx * dx + dz * dz < 1e-6) {
+            return 0;
+        }
+        return Math.toDegrees(Math.atan2(-dx, dz));
+    }
+
+    /** (x, z) の、高さ y の近く（上 2・下 3 まで）で立てる所（足と頭が通れて足元が固い）。なければ null。 */
+    private static Location standNear(org.bukkit.World w, double x, double y, double z) {
+        int bx = (int) Math.floor(x);
+        int bz = (int) Math.floor(z);
+        int by = (int) Math.floor(y);
+        for (int dy : new int[] {0, 1, -1, 2, -2, -3}) {
+            Block feet = w.getBlockAt(bx, by + dy, bz);
+            if (feet.isPassable() && !feet.isLiquid() && feet.getRelative(BlockFace.UP).isPassable()
+                    && feet.getRelative(BlockFace.DOWN).getType().isSolid()) {
+                return new Location(w, x, by + dy, z);
+            }
+        }
+        return null;
+    }
+
+    /** 「守れ」の横隊が向く向きを決める（指示した人が見ていた向き）。 */
+    public void setHoldFacing(java.util.Collection<SoldierBot> targets, float yaw) {
+        for (SoldierBot b : targets) {
+            b.holdYaw = yaw;
+        }
     }
 
     /**
@@ -1079,7 +1194,9 @@ public final class BotManager {
 
     /** 持ち場に着いたか（追従なら follow-distance 以内、地点を守るなら arrive-radius 以内）。 */
     private static boolean arrived(SoldierBot bot, LivingEntity self, Location anchor, Settings s) {
-        double arrive = bot.order.mode() == Order.Mode.FOLLOW ? s.followDistance : s.arriveRadius;
+        // 横隊なら自分の位置にきちんと寄る（重ならないように）
+        double arrive = bot.inFormation ? FORMATION_ARRIVE
+                : bot.order.mode() == Order.Mode.FOLLOW ? s.followDistance : s.arriveRadius;
         return self.getLocation().distanceSquared(anchor) <= arrive * arrive;
     }
 
@@ -1097,8 +1214,17 @@ public final class BotManager {
             bot.stuckTick = now;
         }
         Location dest = nav.isNavigating() ? nav.getTargetAsLocation() : null;
-        if (dest == null || dest.getWorld() != anchor.getWorld() || dest.distanceSquared(anchor) > 4.0) {
-            nav.setTarget(anchor);
+        // 横隊の位置のすぐ近く（3 ブロック以内）なら、経路探索を使わずにまっすぐ寄る
+        // （経路探索は目的地の 1 ブロックほど手前で「着いた」として止まるので、隣と重なる）
+        boolean fine = bot.inFormation && here.getWorld() == anchor.getWorld() && here.distanceSquared(anchor) < 9.0;
+        double tolerance = fine ? 0.25 : 4.0;
+        if (dest == null || dest.getWorld() != anchor.getWorld() || dest.distanceSquared(anchor) > tolerance) {
+            if (fine) {
+                nav.setStraightLineTarget(anchor);
+                nav.getLocalParameters().distanceMargin(0.3);
+            } else {
+                nav.setTarget(anchor);
+            }
         }
     }
 

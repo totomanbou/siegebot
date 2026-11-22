@@ -34,10 +34,11 @@ public final class CommandMenu implements Listener {
 
     private static final int SIZE = 27;
 
-    /** この画面の印。押されたマス → 処理。 */
+    /** この画面の印。押されたマス → 処理（シフト+左クリックのときは shiftActions があればそちら）。 */
     private static final class Holder implements InventoryHolder {
         private Inventory inventory;
         private final Map<Integer, Runnable> actions = new HashMap<>();
+        private final Map<Integer, Runnable> shiftActions = new HashMap<>();
 
         @Override
         public Inventory getInventory() {
@@ -72,23 +73,29 @@ public final class CommandMenu implements Listener {
             put(h, 4, button(icon(own), who, NamedTextColor.AQUA, false, lore), () -> open(p, side));
         } else {
             List<SoldierBot> mine = choices;
-            String sel = commands.selectedName(p, side);
-            put(h, 0, button(Material.NETHER_STAR, "全員に指示", NamedTextColor.GOLD, sel == null,
-                    List.of(commands.personal() ? "自分のボット全員に同じ指示を出す" : "ボット全員に同じ指示を出す")), () -> {
+            java.util.Set<String> sel = commands.selectedNames(p, side);
+            put(h, 0, button(Material.NETHER_STAR, "全員に指示", NamedTextColor.GOLD, sel.isEmpty(),
+                    List.of(commands.personal() ? "自分のボット全員に同じ指示を出す" : "ボット全員に同じ指示を出す",
+                            "ボットの絵をシフト+左クリックすると、何体でも選べる")), () -> {
                         commands.select(p, null);
                         open(p, side);
                     });
             for (int i = 0; i < mine.size() && i < 8; i++) {
                 SoldierBot b = mine.get(i);
                 List<String> lore = List.of(b.type().label() + "・今: " + b.order().describe(),
-                        "押すとこのボットだけに指示する");
+                        "左クリック: このボットだけに指示する",
+                        "シフト+左クリック: 選んでいるボットに足す（もう一度で外す）");
                 put(h, 1 + i, button(icon(b), b.name() + " に指示", NamedTextColor.AQUA,
-                        b.name().equals(sel), lore), () -> {
+                        sel.contains(b.name()), lore), () -> {
                             commands.select(p, b.name());
                             open(p, side);
                         });
+                h.shiftActions.put(1 + i, () -> {
+                    commands.toggle(p, b.name());
+                    open(p, side);
+                });
             }
-            who = sel == null ? "全員" : sel;
+            who = sel.isEmpty() ? "全員" : sel.size() == 1 ? sel.iterator().next() : "選んだ " + sel.size() + " 体";
         }
 
         // ---- 2 段目: 動き ----
@@ -298,7 +305,8 @@ public final class CommandMenu implements Listener {
         if (event.getClickedInventory() != h.inventory) {
             return;
         }
-        Runnable action = h.actions.get(event.getSlot());
+        Runnable action = event.isShiftClick() && event.isLeftClick() && h.shiftActions.containsKey(event.getSlot())
+                ? h.shiftActions.get(event.getSlot()) : h.actions.get(event.getSlot());
         if (action != null) {
             // 画面の開き直し・閉じるは、クリックの処理が終わってから行う
             Bukkit.getScheduler().runTask(plugin, action);

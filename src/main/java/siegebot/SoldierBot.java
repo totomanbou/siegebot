@@ -45,6 +45,10 @@ public final class SoldierBot {
     long drawStartTick = -1;
     /** 近すぎる敵から下がって歩いている途中なら true（弓兵は keep-distance、槍兵は届くぎりぎりまで下がり切る）。 */
     boolean backingOff;
+    /** 横隊に入っている（同じ持ち場のボットが 2 体以上いる）なら true。{@link BotManager#anchorFor} が決める。 */
+    boolean inFormation;
+    /** 「守れ」で横隊が向く向き（度。指示した人が見ていた向き）。null なら敵のリスポーン地点の方。 */
+    Float holdYaw;
     /** 槍兵が最後に突いた時刻（サーバーの tick）。 */
     long lastSpearAttackTick = Long.MIN_VALUE / 2;
     /** 槍兵: 追う道に蜘蛛の巣があったので追わない敵（UUID → この tick まで）。届けばその場で突く。 */

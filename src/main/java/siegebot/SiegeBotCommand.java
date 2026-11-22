@@ -433,6 +433,7 @@ public final class SiegeBotCommand implements TabExecutor {
                     return;
                 }
                 Order.Stance st = parseStance(args, 3);
+                plugin.bots().setHoldFacing(targets, p.getLocation().getYaw()); // 横隊は指示した人が見ていた向きを向く
                 for (SoldierBot b : targets) {
                     orders.put(b, Order.hold(point, st != null ? st : b.order().stance()));
                 }

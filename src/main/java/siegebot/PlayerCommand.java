@@ -38,8 +38,8 @@ public final class PlayerCommand implements TabExecutor {
 
     private final SiegeBotPlugin plugin;
     private final CommandMenu menu;
-    /** プレイヤー → 指示する相手のボット名（無ければ全員）。専用のボットが無効のときだけ使う。 */
-    private final Map<UUID, String> selected = new HashMap<>();
+    /** プレイヤー → 指示する相手のボット名（選んだ順。無ければ全員）。メニューでシフト+左クリックすると複数選べる。 */
+    private final Map<UUID, java.util.LinkedHashSet<String>> selected = new HashMap<>();
     /** プレイヤー → 最後に呼び寄せた時刻（サーバーの tick）。 */
     private final Map<UUID, Long> lastCall = new HashMap<>();
 
@@ -123,30 +123,73 @@ public final class PlayerCommand implements TabExecutor {
         return personal() ? ownBots(p, side) : plugin.bots().of(side);
     }
 
-    /** 選んでいる相手のボット名。全員なら null（選んだボットが消えた・選べなくなったら全員に戻す）。 */
-    String selectedName(Player p, Side side) {
-        String name = selected.get(p.getUniqueId());
-        SoldierBot b = name == null ? null : plugin.bots().get(name);
-        if (b != null && candidates(p, side).contains(b)) {
-            return b.name();
+    /**
+     * 選んでいる相手のボット名（選んだ順）。空なら全員。消えた・選べなくなったボットは外す
+     * （倒れて消えたボットも外れる。全部外れたら全員に戻る）。
+     */
+    java.util.Set<String> selectedNames(Player p, Side side) {
+        java.util.LinkedHashSet<String> names = selected.get(p.getUniqueId());
+        if (names == null) {
+            return java.util.Set.of();
         }
-        selected.remove(p.getUniqueId());
-        return null;
+        List<SoldierBot> can = candidates(p, side);
+        names.removeIf(n -> {
+            SoldierBot b = plugin.bots().get(n);
+            return b == null || !can.contains(b);
+        });
+        if (names.isEmpty()) {
+            selected.remove(p.getUniqueId());
+            return java.util.Set.of();
+        }
+        return java.util.Collections.unmodifiableSet(names);
     }
 
-    /** 指示する相手を選ぶ（null で全員）。 */
+    /** 1 体だけ選んでいればその名前。全員・複数なら null。 */
+    String selectedName(Player p, Side side) {
+        java.util.Set<String> names = selectedNames(p, side);
+        return names.size() == 1 ? names.iterator().next() : null;
+    }
+
+    /** 指示する相手を、そのボット 1 体だけにする（null で全員）。 */
     void select(Player p, String botName) {
         if (botName == null) {
             selected.remove(p.getUniqueId());
         } else {
-            selected.put(p.getUniqueId(), botName);
+            selected.put(p.getUniqueId(), new java.util.LinkedHashSet<>(List.of(botName)));
         }
     }
 
-    /** 指示が効くボット: 選んだ相手（全員か 1 体）。専用のボットが有効なら、自分のボットの中から選ぶ。 */
+    /** 指示する相手にそのボットを足す（選んでいれば外す）。メニューのシフト+左クリック。 */
+    void toggle(Player p, String botName) {
+        java.util.LinkedHashSet<String> names = selected.computeIfAbsent(p.getUniqueId(), k -> new java.util.LinkedHashSet<>());
+        if (!names.remove(botName)) {
+            names.add(botName);
+        }
+        if (names.isEmpty()) {
+            selected.remove(p.getUniqueId());
+        }
+    }
+
+    /** 指示する相手の書き方（全員・名前・N 体）。 */
+    String describeSelection(Player p, Side side) {
+        java.util.Set<String> names = selectedNames(p, side);
+        return names.isEmpty() ? "全員" : names.size() == 1 ? names.iterator().next()
+                : names.size() + " 体（" + String.join("・", names) + "）";
+    }
+
+    /** 指示が効くボット: 選んだ相手（全員か、選んだ 1 体・複数体）。専用のボットが有効なら、自分のボットの中から選ぶ。 */
     List<SoldierBot> targets(Player p, Side side) {
-        String name = selectedName(p, side);
-        return name == null ? candidates(p, side) : List.of(plugin.bots().get(name));
+        java.util.Set<String> names = selectedNames(p, side);
+        if (names.isEmpty()) {
+            return candidates(p, side);
+        }
+        List<SoldierBot> r = new ArrayList<>();
+        for (SoldierBot b : candidates(p, side)) {
+            if (names.contains(b.name())) {
+                r.add(b);
+            }
+        }
+        return r;
     }
 
     // ---- 指示 ----
@@ -214,6 +257,7 @@ public final class PlayerCommand implements TabExecutor {
                     + " ブロック以内の地面や壁を見てください）。", NamedTextColor.RED);
             return;
         }
+        plugin.bots().setHoldFacing(targets(p, side), p.getLocation().getYaw()); // 横隊は指示した人が見ていた向きを向く
         apply(p, side, b -> Order.hold(point, b.order().stance()));
     }
 
@@ -250,7 +294,7 @@ public final class PlayerCommand implements TabExecutor {
         String next = idx + 1 < mine.size() ? mine.get(idx + 1).name() : null;
         select(p, next);
         Component msg = Component.text("指示する相手: ", NamedTextColor.GRAY)
-                .append(Component.text(next == null ? "全員" : next, NamedTextColor.AQUA));
+                .append(Component.text(describeSelection(p, side), NamedTextColor.AQUA));
         p.sendActionBar(msg);
         p.sendMessage(Component.text("[SiegeBot] ", NamedTextColor.GOLD).append(msg));
     }
@@ -258,8 +302,7 @@ public final class PlayerCommand implements TabExecutor {
     private void status(Player p, Side side) {
         List<SoldierBot> all = candidates(p, side);
         if (all.size() > 1) {
-            String cur = selectedName(p, side);
-            tell(p, "指示する相手: " + (cur == null ? "全員" : cur), NamedTextColor.GRAY);
+            tell(p, "指示する相手: " + describeSelection(p, side), NamedTextColor.GRAY);
         }
         for (SoldierBot b : all) {
             tell(p, b.name() + "：" + b.order().describe() + (b.alive() ? "" : "（倒れている）"), NamedTextColor.WHITE);
