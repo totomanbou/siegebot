@@ -162,13 +162,16 @@ public final class GameListener implements Listener {
         }
         // 火力: ボットが与えるダメージに damage-multiplier を掛ける
         // 防御力: ボットが受けるダメージを defense-multiplier で割る（ボットどうしなら両方が効く）
+        // どちらも兵種ごと（units.<兵種>.damage-multiplier など。書いていなければ combat の値）
         Settings s = plugin.settings();
         double damage = event.getDamage();
-        if (bots.byEntity(attacker) != null) {
-            damage *= s.damageMultiplier;
+        SoldierBot by = bots.byEntity(attacker);
+        SoldierBot hit = bots.byEntity(victim);
+        if (by != null) {
+            damage *= s.unit(by.type).damageMultiplier;
         }
-        if (bots.byEntity(victim) != null) {
-            damage /= s.defenseMultiplier;
+        if (hit != null) {
+            damage /= s.unit(hit.type).defenseMultiplier;
         }
         if (damage != event.getDamage()) {
             event.setDamage(damage);

@@ -111,13 +111,44 @@ public final class Settings {
         public final double attackRange;
         /** 攻撃の間隔（tick）。 */
         public final int attackDelayTicks;
+        /** 移動の速さの倍率（書いていなければ combat.speed）。 */
+        public final float speed;
+        /** 火力（書いていなければ combat.damage-multiplier）。 */
+        public final double damageMultiplier;
+        /** 防御力（書いていなければ combat.defense-multiplier）。 */
+        public final double defenseMultiplier;
+        /** 最大の体力（書いていなければ 20 = ハート 10 個）。 */
+        public final double maxHealth;
 
-        Unit(String nameSuffix, Map<String, ItemStack> equipment, double attackRange, int attackDelayTicks) {
+        Unit(String nameSuffix, Map<String, ItemStack> equipment, double attackRange, int attackDelayTicks,
+             float speed, double damageMultiplier, double defenseMultiplier, double maxHealth) {
             this.nameSuffix = nameSuffix;
             this.equipment = equipment;
             this.attackRange = attackRange;
             this.attackDelayTicks = attackDelayTicks;
+            this.speed = speed;
+            this.damageMultiplier = damageMultiplier;
+            this.defenseMultiplier = defenseMultiplier;
+            this.maxHealth = maxHealth;
         }
+    }
+
+    /**
+     * 兵種の数値の上書き。サーバーの config.yml に units.&lt;兵種&gt;.&lt;key&gt; が書いてあればその値、
+     * なければ fallback（combat の値）。jar の既定の config.yml の値は見ない（contains(path, true)）。
+     */
+    private static double over(FileConfiguration c, String unit, String key, double fallback) {
+        String path = "units." + unit + "." + key;
+        return c.contains(path, true) ? c.getDouble(path, fallback) : fallback;
+    }
+
+    private Unit unit(FileConfiguration c, String unit, String suffix, Map<String, ItemStack> eq,
+                      double attackRange, int attackDelayTicks) {
+        return new Unit(suffix, eq, attackRange, attackDelayTicks,
+                (float) over(c, unit, "speed", speed),
+                Math.max(0.0, over(c, unit, "damage-multiplier", damageMultiplier)),
+                Math.max(0.1, over(c, unit, "defense-multiplier", defenseMultiplier)),
+                Math.max(1.0, Math.min(1024.0, over(c, unit, "max-health", 20.0))));
     }
 
     public Settings(FileConfiguration c) {
@@ -165,14 +196,15 @@ public final class Settings {
         // getConfigurationSection は、サーバーの config.yml にない節でも jar の既定にあれば空の節を作って返すので、
         // 「書いてあるか」は contains(path, true)（既定を見ない）で確かめる
         ConfigurationSection oldEq = own(c, "equipment");
-        units.put(UnitType.SOLDIER, new Unit(
+        units.put(UnitType.SOLDIER, unit(c, "soldier",
                 c.getString("units.soldier.name-suffix", "の兵"),
                 readEquipment("soldier", own(c, "units.soldier.equipment"), oldEq, Map.of(
                         "hand", "IRON_SWORD", "off_hand", "SHIELD",
                         "helmet", "IRON_HELMET", "chestplate", "IRON_CHESTPLATE",
                         "leggings", "IRON_LEGGINGS", "boots", "IRON_BOOTS")),
-                attackRange, attackDelayTicks));
-        units.put(UnitType.ARCHER, new Unit(
+                Math.max(1.0, over(c, "soldier", "attack-range", attackRange)),
+                Math.max(1, (int) Math.round(over(c, "soldier", "attack-delay-ticks", attackDelayTicks)))));
+        units.put(UnitType.ARCHER, unit(c, "archer",
                 c.getString("units.archer.name-suffix", "の弓兵"),
                 readEquipment("archer", own(c, "units.archer.equipment"), null, Map.of(
                         "hand", "BOW",
@@ -180,7 +212,7 @@ public final class Settings {
                         "leggings", "LEATHER_LEGGINGS", "boots", "LEATHER_BOOTS")),
                 attackRange, attackDelayTicks));
         // 槍兵の既定の槍は、本サーバーで槍の見た目になる鉄の斧（custom_model_data の文字 "1"）
-        units.put(UnitType.SPEARMAN, new Unit(
+        units.put(UnitType.SPEARMAN, unit(c, "spearman",
                 c.getString("units.spearman.name-suffix", "の槍兵"),
                 readEquipment("spearman", own(c, "units.spearman.equipment"), null, Map.of(
                         "hand", "minecraft:iron_axe[custom_model_data={strings:[\"1\"]}]", "off_hand", "SHIELD",

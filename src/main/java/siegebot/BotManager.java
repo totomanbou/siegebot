@@ -165,6 +165,7 @@ public final class BotManager {
             npc.data().set(NPC.Metadata.NAMEPLATE_VISIBLE, false); // Citizens の名前を一瞬も出さない
         }
         npc.spawn(at, SpawnReason.PLUGIN);
+        applyMaxHealth(bot, true);
         return bot;
     }
 
@@ -431,6 +432,7 @@ public final class BotManager {
             return false;
         }
         bot.target = null;
+        applyMaxHealth(bot, true);
         if (announce) {
             say(bot, "参戦した");
         }
@@ -473,6 +475,27 @@ public final class BotManager {
     public void reapplySettings() {
         for (SoldierBot b : bots.values()) {
             applyNavigatorSettings(b.npc, b.type);
+            applyMaxHealth(b, false);
+        }
+    }
+
+    /** 兵種の最大の体力（units.&lt;兵種&gt;.max-health）を入れる。full なら満タンにする（出したとき・参戦したとき）。 */
+    private void applyMaxHealth(SoldierBot bot, boolean full) {
+        if (!(bot.npc.getEntity() instanceof LivingEntity le)) {
+            return;
+        }
+        double max = plugin.settings().unit(bot.type).maxHealth;
+        org.bukkit.attribute.AttributeInstance a = le.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH);
+        if (a == null) {
+            return;
+        }
+        if (a.getBaseValue() != max) {
+            a.setBaseValue(max);
+        }
+        if (full) {
+            le.setHealth(a.getValue());
+        } else if (le.getHealth() > a.getValue()) {
+            le.setHealth(a.getValue());
         }
     }
 
@@ -483,7 +506,7 @@ public final class BotManager {
         p.range(s.pathRange);
         // 落ちてよい高さ。Citizens は既定（-1）だと高い所から降りる経路を探さない
         p.fallDistance(s.maxFallDistance);
-        p.speedModifier(s.speed);
+        p.speedModifier(unit.speed);
         p.attackRange(unit.attackRange);
         p.attackDelayTicks(unit.attackDelayTicks);
         // 動けないときに目的地へ瞬間移動しない（その場で経路を取り直す）

@@ -45,7 +45,9 @@ public final class SiegeBotCommand implements TabExecutor {
             case "tp" -> tp(sender, args);
             case "protect" -> protect(sender, args);
             case "debug" -> {
-                if (args.length >= 2 && args[1].equalsIgnoreCase("kb")) {
+                if (args.length >= 2 && args[1].equalsIgnoreCase("units")) {
+                    debugUnits(sender);
+                } else if (args.length >= 2 && args[1].equalsIgnoreCase("kb")) {
                     GameListener.logKnockback = !GameListener.logKnockback;
                     msg(sender, "ボットのダメージ・ノックバックのログを" + (GameListener.logKnockback ? "出します" : "止めます")
                             + "（サーバーのログに出る）。");
@@ -514,6 +516,38 @@ public final class SiegeBotCommand implements TabExecutor {
         boolean on = args[2].equalsIgnoreCase("on");
         b.npc.setProtected(on);
         msg(sender, b.name() + " を" + (on ? "無敵にしました。" : "無敵でなくしました。"));
+    }
+
+    /** /sb debug units: 兵種ごとに、今使っている値（combat の値に落ちたものも含む）と装備。設定の確かめ用。 */
+    private void debugUnits(CommandSender sender) {
+        Settings st = plugin.settings();
+        msg(sender, "units.default=" + st.defaultUnit.key());
+        for (UnitType t : UnitType.values()) {
+            Settings.Unit u = st.unit(t);
+            List<String> eq = new ArrayList<>();
+            for (Map.Entry<String, org.bukkit.inventory.ItemStack> e : u.equipment.entrySet()) {
+                io.papermc.paper.datacomponent.item.CustomModelData cmd =
+                        e.getValue().getData(io.papermc.paper.datacomponent.DataComponentTypes.CUSTOM_MODEL_DATA);
+                eq.add(e.getKey() + "=" + e.getValue().getType().getKey().getKey()
+                        + (cmd == null || cmd.strings().isEmpty() ? "" : "(model=" + String.join(",", cmd.strings()) + ")"));
+            }
+            msg(sender, String.format(Locale.ROOT,
+                    "%s: suffix=%s speed=%.2f damage=%.2f defense=%.2f max-health=%.1f attack-range=%.2f attack-delay=%d equipment=[%s]",
+                    t.key(), u.nameSuffix, u.speed, u.damageMultiplier, u.defenseMultiplier, u.maxHealth, u.attackRange,
+                    u.attackDelayTicks, String.join(" ", eq)));
+        }
+        msg(sender, String.format(Locale.ROOT,
+                "spearman: stop-inside=%.2f back-off-inside=%.2f shield-lower=%dt / archer: range=%.1f min=%.1f keep=%.1f "
+                        + "draw=%dt interval=%dt speed=%.2f damage=%.2f inaccuracy=%.2f",
+                st.spearStopInside, st.spearBackOffInside, st.spearShieldLowerAfterTicks, st.archerRange,
+                st.archerMinDistance, st.archerKeepDistance, st.archerDrawTicks, st.archerShotIntervalTicks,
+                st.archerArrowSpeed, st.archerArrowDamage, st.archerInaccuracy));
+        msg(sender, String.format(Locale.ROOT,
+                "combat: engage=%.1f push-leash=%.1f guard-leash=%.1f follow=%.1f arrive=%.1f path=%.0f fall-damage=%b "
+                        + "regen=%.1f/%dt delay=%dt / shield: enabled=%b lower=%dt / personal=%b max=%d / teams=%s,%s",
+                st.engageRadius, st.pushLeash, st.guardLeash, st.followDistance, st.arriveRadius, st.pathRange, st.fallDamage,
+                st.regenAmount, st.regenIntervalTicks, st.regenDelayTicks, st.shieldEnabled, st.shieldLowerAfterTicks,
+                st.personalBots, st.maxBotsPerPlayer, st.attackTeam, st.defendTeam));
     }
 
     private void debug(CommandSender sender) {

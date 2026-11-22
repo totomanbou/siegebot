@@ -98,6 +98,13 @@ units:
   soldier:
     # 専用のボットの名前の後ろに付ける文字（「名前の兵」）
     name-suffix: "の兵"
+    # 書くと、この兵種だけ combat の値の代わりに使う（書かなければ combat の値。体力は 20 = ハート 10 個）
+    # speed: 1.5
+    # damage-multiplier: 1.2
+    # defense-multiplier: 1.2
+    # max-health: 20
+    # attack-range: 3.0         … 攻撃の届く距離（書かなければ combat.attack-range）
+    # attack-delay-ticks: 12    … 攻撃の間隔（書かなければ combat.attack-delay-ticks）
     # 装備。部位は hand・off_hand・helmet・chestplate・leggings・boots。不要な部位は行ごと消す。
     # アイテムは ID（IRON_SWORD）か、/give と同じ部品つきの書き方（'minecraft:iron_axe[custom_model_data={strings:["1"]}]'）
     equipment:
@@ -110,6 +117,11 @@ units:
   # 槍兵: 届く距離が長く（attack-range）、届くぎりぎりの所から突く。殴り合いの最中も、飛んでくる矢は盾で防ぐ（突くより優先）
   spearman:
     name-suffix: "の槍兵"
+    # 書くと、この兵種だけ combat の値の代わりに使う（書かなければ combat の値。体力は 20 = ハート 10 個）
+    # speed: 1.5
+    # damage-multiplier: 1.2
+    # defense-multiplier: 1.2
+    # max-health: 20
     equipment:
       # 本サーバーのリソースパックで槍の見た目になる鉄の斧（custom_model_data の文字 "1"）
       hand: 'minecraft:iron_axe[custom_model_data={strings:["1"]}]'
@@ -131,6 +143,11 @@ units:
   # 弓兵: 離れた所から矢を撃つ。矢は尽きず、拾えない
   archer:
     name-suffix: "の弓兵"
+    # 書くと、この兵種だけ combat の値の代わりに使う（書かなければ combat の値。体力は 20 = ハート 10 個）
+    # speed: 1.5
+    # damage-multiplier: 1.2
+    # defense-multiplier: 1.2
+    # max-health: 20
     equipment:
       hand: BOW
       helmet: CHAINMAIL_HELMET
@@ -151,8 +168,7 @@ units:
     # 矢の速さ（ブロック/tick。プレイヤーが弓を引き切ると 3.0）
     arrow-speed: 3.0
     # 矢の基本ダメージ。当たったときのダメージは「速さ × これ」（3.0 × 3.0 で 9 = ハート 4.5 個。引き切りの会心で少し増える）。
-    # 既定の 3.0 はプレイヤーの弓（2.0）の 1.5 倍
-    # combat.damage-multiplier も掛かる
+    # 既定の 3.0 はプレイヤーの弓（2.0）の 1.5 倍。火力（units.archer.damage-multiplier、書かなければ combat の値）も掛かる
     arrow-damage: 3.0
     # 狙いのぶれ（プレイヤーの弓は 1.0。0 で狙ったとおりに飛ぶ）
     inaccuracy: 1.0

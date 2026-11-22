@@ -165,7 +165,7 @@ final class Shields {
     /** 構えている間の設定: 遅く歩き、脅威の方を向く。 */
     private void applyRaised(SoldierBot bot, Settings s) {
         bot.shieldUp = true;
-        float slow = (float) (s.speed * s.shieldMoveSpeedMultiplier);
+        float slow = (float) (s.unit(bot.type).speed * s.shieldMoveSpeedMultiplier);
         Function<Navigator, Location> look = lookFunction(bot);
         Navigator nav = bot.npc.getNavigator();
         NavigatorParameters def = nav.getDefaultParameters();
@@ -190,11 +190,11 @@ final class Shields {
         bot.blockLook = null;
         Navigator nav = bot.npc.getNavigator();
         NavigatorParameters def = nav.getDefaultParameters();
-        def.speedModifier(s.speed);
+        def.speedModifier(s.unit(bot.type).speed);
         def.lookAtFunction(null);
         NavigatorParameters local = nav.getLocalParameters();
         if (local != null) {
-            local.speedModifier(s.speed);
+            local.speedModifier(s.unit(bot.type).speed);
             if (!nav.isNavigating()) {
                 local.lookAtFunction(null);
             }
