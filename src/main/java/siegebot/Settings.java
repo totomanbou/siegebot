@@ -230,7 +230,7 @@ public final class Settings {
         UnitType def = UnitType.parse(c.getString("units.default", "soldier"));
         defaultUnit = def == null ? UnitType.SOLDIER : def;
 
-        archerRange = Math.max(4.0, c.getDouble("units.archer.range", 16));
+        archerRange = Math.max(4.0, c.getDouble("units.archer.range", 32));
         archerMinDistance = Math.max(0.0, c.getDouble("units.archer.min-distance", 5));
         archerKeepDistance = Math.max(archerMinDistance + 1, Math.min(archerRange,
                 c.getDouble("units.archer.keep-distance", 10)));

@@ -1110,9 +1110,6 @@ public final class BotManager {
     private LivingEntity pickTarget(SoldierBot bot, LivingEntity self, Location anchor, long now) {
         Settings s = plugin.settings();
         double leash = bot.order != null && bot.order.stance() == Order.Stance.PUSH ? s.pushLeash : s.guardLeash;
-        if (bot.type == UnitType.ARCHER) {
-            leash = Math.max(leash, s.archerRange); // 弓兵は持ち場から届く敵も狙う（近づくのは leash の内だけ。archerMove）
-        }
         boolean currentValid = bot.target != null && validTarget(bot, self, bot.target, anchor, leash)
                 && !chaseBlocked(bot, self, bot.target, now);
         if (currentValid && now - bot.lastRetargetTick < s.retargetTicks) {
@@ -1153,6 +1150,11 @@ public final class BotManager {
         }
         Settings s = plugin.settings();
         double d2 = e.getLocation().distanceSquared(self.getLocation());
+        // 弓兵は、見えて units.archer.range 以内の敵なら、構え（積極的・持ち場優先）や持ち場からの距離に関係なく撃つ。
+        // それ以外の敵（見えない・遠い）は剣兵と同じ条件で狙い、近づくのは持ち場から leash の内だけ（archerMove）
+        if (bot.type == UnitType.ARCHER && d2 <= s.archerRange * s.archerRange && self.hasLineOfSight(e)) {
+            return true;
+        }
         if (d2 > s.engageRadius * s.engageRadius) {
             return false;
         }

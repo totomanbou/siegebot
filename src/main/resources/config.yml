@@ -157,9 +157,9 @@ units:
       chestplate: LEATHER_CHESTPLATE
       leggings: LEATHER_LEGGINGS
       boots: LEATHER_BOOTS
-    # 撃つ最大の距離（ブロック）。これより遠い・見えない敵へは近づく（近づくのは持ち場から push-leash / guard-leash の内だけ。
-    # 狙うのは持ち場からこの距離までの敵）
-    range: 16
+    # 撃つ最大の距離（ブロック）。見えてこの距離以内の敵は、構え（積極的・持ち場優先）や持ち場からの距離に関係なく撃つ。
+    # 見えない・遠い敵へは近づくが、近づくのは持ち場から push-leash / guard-leash の内だけ
+    range: 32
     # 敵がこの距離より近いと下がる（ブロック）
     min-distance: 5
     # 下がるときは、敵からこの距離まで離れる（ブロック）
