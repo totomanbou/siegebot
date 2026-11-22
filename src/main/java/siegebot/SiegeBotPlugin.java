@@ -18,6 +18,8 @@ public final class SiegeBotPlugin extends JavaPlugin {
     private Shields shields;
     private Archers archers;
     private BukkitTask archerTask;
+    private Spearmen spearmen;
+    private BukkitTask spearTask;
     private CombatCheck combat;
     private PlayerCommand playerCommand;
 
@@ -25,11 +27,13 @@ public final class SiegeBotPlugin extends JavaPlugin {
     public void onEnable() {
         saveDefaultConfig();
         settings = new Settings(getConfig());
+        settings.warnings.forEach(getLogger()::warning);
         data = new SiegeData(new File(getDataFolder(), "data.yml"), getLogger());
         data.load();
         bots = new BotManager(this);
         shields = new Shields(this);
         archers = new Archers(this);
+        spearmen = new Spearmen(this);
         combat = new CombatCheck(getLogger());
 
         Bukkit.getPluginManager().registerEvents(new GameListener(this), this);
@@ -64,6 +68,7 @@ public final class SiegeBotPlugin extends JavaPlugin {
     public void reloadAll() {
         reloadConfig();
         settings = new Settings(getConfig());
+        settings.warnings.forEach(getLogger()::warning);
         data.load();
         archers.lowerAll();
         shields.lowerAll(); // 構えたままの遅い歩きを、新しい設定の速さに戻してから入れ直す
@@ -85,6 +90,10 @@ public final class SiegeBotPlugin extends JavaPlugin {
             archerTask.cancel();
         }
         archerTask = Bukkit.getScheduler().runTaskTimer(this, () -> archers.tick(), 40L, Archers.TICK_PERIOD);
+        if (spearTask != null) {
+            spearTask.cancel();
+        }
+        spearTask = Bukkit.getScheduler().runTaskTimer(this, () -> spearmen.tick(), 40L, Spearmen.TICK_PERIOD);
     }
 
     /** /sb spawn で出したボット（持ち主なし）を、陣営のリスポーン地点に出す。 */

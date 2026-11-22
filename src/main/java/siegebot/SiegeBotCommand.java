@@ -70,9 +70,9 @@ public final class SiegeBotCommand implements TabExecutor {
 
     private void help(CommandSender sender) {
         msg(sender, "コマンド一覧:");
-        msg(sender, "/sb revive <プレイヤー|@p|@a|bots|all> [数] [soldier|archer] - ボットを参戦させる（倒れていれば戻し、足りなければ出す。"
+        msg(sender, "/sb revive <プレイヤー|@p|@a|bots|all> [数] [soldier|spearman|archer] - ボットを参戦させる（倒れていれば戻し、足りなければ出す。"
                 + "コマンドブロック用。数は 1 人あたりの体数。兵種を書くとその兵種だけを数えて出す）");
-        msg(sender, "/sb spawn <名前> <attack|defend> [soldier|archer] - 持ち主のいないボットを出す（出した地点を守る）");
+        msg(sender, "/sb spawn <名前> <attack|defend> [soldier|spearman|archer] - 持ち主のいないボットを出す（出した地点を守る）");
         msg(sender, "/sb remove <名前> - ボットを消す");
         msg(sender, "/sb list - ボットの一覧");
         msg(sender, "/sb spawnpoint <attack|defend> [clear | x y z] - リスポーン地点を今いる場所（または座標）にする。clear で消す");
@@ -89,7 +89,7 @@ public final class SiegeBotCommand implements TabExecutor {
         Side side = args.length == 3 || args.length == 4 ? Side.parse(args[2]) : null;
         UnitType type = args.length == 4 ? UnitType.parse(args[3]) : null;
         if (side == null || (args.length == 4 && type == null)) {
-            msg(sender, "使い方: /sb spawn <名前> <attack|defend> [soldier|archer]");
+            msg(sender, "使い方: /sb spawn <名前> <attack|defend> [soldier|spearman|archer]");
             return;
         }
         String name = args[1];
@@ -122,7 +122,7 @@ public final class SiegeBotCommand implements TabExecutor {
      * 兵種（soldier / archer）を書くと、その兵種だけを数えてそろえる（{@link BotManager#revive}）。数と兵種はどちらが先でもよい。
      */
     private void revive(CommandSender sender, String[] args) {
-        String usage = "使い方: /sb revive <プレイヤー|@p|@a|bots|all> [1人あたりの数] [soldier|archer]";
+        String usage = "使い方: /sb revive <プレイヤー|@p|@a|bots|all> [1人あたりの数] [soldier|spearman|archer]";
         if (args.length < 2 || args.length > 4) {
             msg(sender, usage);
             return;
@@ -137,7 +137,7 @@ public final class SiegeBotCommand implements TabExecutor {
             } else if (c != null && count == null) {
                 count = c;
             } else {
-                msg(sender, "「" + args[i] + "」が分かりません。数は 1 以上の整数、兵種は soldier（剣兵）か archer（弓兵）です。" + usage);
+                msg(sender, "「" + args[i] + "」が分かりません。数は 1 以上の整数、兵種は soldier（剣兵）・spearman（槍兵）・archer（弓兵）です。" + usage);
                 return;
             }
         }
@@ -460,6 +460,11 @@ public final class SiegeBotCommand implements TabExecutor {
                 int c = plugin.combat().secondsLeft(bp); // CombatLog で戦闘中なら残りの秒数
                 sb.append(" combat=").append(c > 0 ? c + "s" : "なし");
                 sb.append(" shield=").append(plugin.shields().describe(b));
+                org.bukkit.inventory.ItemStack hand = bp.getInventory().getItemInMainHand();
+                io.papermc.paper.datacomponent.item.CustomModelData cmd =
+                        hand.getData(io.papermc.paper.datacomponent.DataComponentTypes.CUSTOM_MODEL_DATA);
+                sb.append(" hand=").append(hand.getType().getKey().getKey())
+                        .append(cmd == null || cmd.strings().isEmpty() ? "" : "(model=" + String.join(",", cmd.strings()) + ")");
                 String bow = plugin.archers().describe(b);
                 if (bow != null) {
                     sb.append(" bow=").append(bow);
@@ -538,7 +543,7 @@ public final class SiegeBotCommand implements TabExecutor {
         return n == 4 ? STANCES : List.of();
     }
 
-    private static final List<String> TYPES = List.of("soldier", "archer");
+    private static final List<String> TYPES = List.of("soldier", "spearman", "archer");
 
     /** revive の 3・4 番目: まだ書いていない方（数・兵種）の候補。 */
     private static List<String> reviveExtras(String[] args) {

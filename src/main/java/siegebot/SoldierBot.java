@@ -43,8 +43,10 @@ public final class SoldierBot {
     // ---- 弓兵（{@link Archers} が使う） ----
     /** 弓を引き始めた時刻（サーバーの tick）。引いていなければ -1。 */
     long drawStartTick = -1;
-    /** 近すぎる敵から下がって歩いている途中なら true（keep-distance まで下がり切る）。 */
-    boolean archerBackingOff;
+    /** 近すぎる敵から下がって歩いている途中なら true（弓兵は keep-distance、槍兵は届くぎりぎりまで下がり切る）。 */
+    boolean backingOff;
+    /** 槍兵が最後に突いた時刻（サーバーの tick）。 */
+    long lastSpearAttackTick = Long.MIN_VALUE / 2;
     /** この時刻（サーバーの tick）まで次の矢を引き始めない。 */
     long nextDrawTick;
     /** 狙いの動きの見積もり用: 最後に見た狙いの位置・その時刻・その相手。 */

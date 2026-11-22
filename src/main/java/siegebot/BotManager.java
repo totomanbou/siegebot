@@ -148,14 +148,14 @@ public final class BotManager {
         npc.data().set(NPC.Metadata.DISABLE_DEFAULT_STUCK_ACTION, true);
         npc.data().set(NPC.Metadata.KEEP_CHUNK_LOADED, true);
         Equipment eq = npc.getOrAddTrait(Equipment.class);
-        for (Map.Entry<String, Material> e : plugin.settings().unit(type).equipment.entrySet()) {
+        for (Map.Entry<String, ItemStack> e : plugin.settings().unit(type).equipment.entrySet()) {
             Equipment.EquipmentSlot slot = slotOf(e.getKey());
-            if (slot == null || (e.getValue() == Material.SHIELD && !plugin.settings().shieldEnabled)) {
+            if (slot == null || (e.getValue().getType() == Material.SHIELD && !plugin.settings().shieldEnabled)) {
                 continue; // shield.enabled が false なら盾は持たせない
             }
             eq.set(slot, equipmentItem(e.getValue()));
         }
-        applyNavigatorSettings(npc);
+        applyNavigatorSettings(npc, type);
         SoldierBot bot = new SoldierBot(name, side, npc, owner, type);
         bot.order = owner != null && ownerName != null
                 ? Order.follow(ownerName, Order.Stance.GUARD)
@@ -391,19 +391,20 @@ public final class BotManager {
     /** config.yml を読み直した後に、移動・攻撃の設定を全ボットに入れ直す。 */
     public void reapplySettings() {
         for (SoldierBot b : bots.values()) {
-            applyNavigatorSettings(b.npc);
+            applyNavigatorSettings(b.npc, b.type);
         }
     }
 
-    private void applyNavigatorSettings(NPC npc) {
+    private void applyNavigatorSettings(NPC npc, UnitType type) {
         Settings s = plugin.settings();
+        Settings.Unit unit = s.unit(type);
         NavigatorParameters p = npc.getNavigator().getDefaultParameters();
         p.range(s.pathRange);
         // 落ちてよい高さ。Citizens は既定（-1）だと高い所から降りる経路を探さない
         p.fallDistance(s.maxFallDistance);
         p.speedModifier(s.speed);
-        p.attackRange(s.attackRange);
-        p.attackDelayTicks(s.attackDelayTicks);
+        p.attackRange(unit.attackRange);
+        p.attackDelayTicks(unit.attackDelayTicks);
         // 動けないときに目的地へ瞬間移動しない（その場で経路を取り直す）
         p.stuckAction((n, nav) -> false);
         try {
@@ -413,10 +414,10 @@ public final class BotManager {
         }
     }
 
-    /** 装備のアイテム。盾は壊れないようにする（構えるたびに耐久が減るため）。 */
-    private static ItemStack equipmentItem(Material m) {
-        ItemStack item = new ItemStack(m);
-        if (m == Material.SHIELD) {
+    /** 装備のアイテム（設定のアイテムを写したもの）。盾は壊れないようにする（構えるたびに耐久が減るため）。 */
+    private static ItemStack equipmentItem(ItemStack template) {
+        ItemStack item = template.clone();
+        if (item.getType() == Material.SHIELD) {
             ItemMeta meta = item.getItemMeta();
             meta.setUnbreakable(true);
             item.setItemMeta(meta);
@@ -738,6 +739,9 @@ public final class BotManager {
             if (archerMove(bot, nav, self, target, anchor, s, now)) {
                 return;
             }
+        } else if (target != null && bot.type == UnitType.SPEARMAN) {
+            spearMove(bot, nav, self, target, s);
+            return;
         } else if (target != null) {
             EntityTarget cur = nav.getEntityTarget();
             if (cur == null || cur.getTarget() != target || !nav.isNavigating()) {
@@ -780,25 +784,25 @@ public final class BotManager {
                 Location away = retreatSpot(here, t, s.archerKeepDistance - d);
                 if (away != null) {
                     Location dest = nav.isNavigating() ? nav.getTargetAsLocation() : null;
-                    if (!bot.archerBackingOff || dest == null || dest.distanceSquared(away) > 4.0) {
+                    if (!bot.backingOff || dest == null || dest.distanceSquared(away) > 4.0) {
                         nav.setTarget(away);
-                        bot.archerBackingOff = true;
+                        bot.backingOff = true;
                     }
                     return true;
                 }
                 // 下がる場所がなければ、その場で撃つ
             }
             // 下がっている途中なら keep-distance まで下がり切る。それ以外の歩き（近づく・持ち場へ）はやめて撃つ
-            boolean keepBacking = bot.archerBackingOff && nav.isNavigating() && d < s.archerKeepDistance;
+            boolean keepBacking = bot.backingOff && nav.isNavigating() && d < s.archerKeepDistance;
             if (!keepBacking) {
-                bot.archerBackingOff = false;
+                bot.backingOff = false;
                 if (nav.isNavigating()) {
                     nav.cancelNavigation();
                 }
             }
             return true;
         }
-        bot.archerBackingOff = false;
+        bot.backingOff = false;
         double leash = bot.order != null && bot.order.stance() == Order.Stance.PUSH ? s.pushLeash : s.guardLeash;
         if (anchor != null && t.distanceSquared(anchor) > leash * leash) {
             return false; // 持ち場から離れすぎるので追わない（見えて届けば撃つ）
@@ -808,6 +812,57 @@ public final class BotManager {
             nav.setTarget(target, false); // 近づくだけで殴らない
         }
         return true;
+    }
+
+    /**
+     * 槍兵の動き（突くのと、近づいて届いたら止まるのは {@link Spearmen} が 2 tick ごとに行う）。
+     * <ul>
+     *   <li>届かない・見えない: 近づく（Citizens の追跡。殴らない）。</li>
+     *   <li>届く: 止まる。届く距離より back-off-inside 以上内側まで寄られたら、届くぎりぎりまで下がる。</li>
+     * </ul>
+     * 届くかは、目から相手の当たり判定の箱までの距離（{@link #reachDistance}）で比べる（プレイヤーのリーチと同じ測り方）。
+     */
+    private void spearMove(SoldierBot bot, Navigator nav, LivingEntity self, LivingEntity target, Settings s) {
+        double reach = s.unit(UnitType.SPEARMAN).attackRange;
+        double d = reachDistance(self, target);
+        if (d <= reach && self.hasLineOfSight(target)) {
+            if (d < reach - s.spearBackOffInside) {
+                Location away = retreatSpot(self.getLocation(), target.getLocation(), reach - s.spearStopInside - d);
+                if (away != null) {
+                    Location dest = nav.isNavigating() ? nav.getTargetAsLocation() : null;
+                    if (!bot.backingOff || dest == null || dest.distanceSquared(away) > 4.0) {
+                        nav.setTarget(away);
+                        bot.backingOff = true;
+                    }
+                    return;
+                }
+                // 下がる場所がなければ、その場で突く
+            }
+            boolean keepBacking = bot.backingOff && nav.isNavigating() && d < reach - s.spearStopInside;
+            if (!keepBacking) {
+                bot.backingOff = false;
+                if (nav.isNavigating()) {
+                    nav.cancelNavigation();
+                }
+            }
+            return;
+        }
+        bot.backingOff = false;
+        EntityTarget cur = nav.getEntityTarget();
+        if (cur == null || cur.getTarget() != target || cur.isAggressive() || !nav.isNavigating()) {
+            nav.setTarget(target, false); // 近づくだけ。突くのは Spearmen
+        }
+    }
+
+    /** self の目から target の当たり判定の箱までの距離（プレイヤーのリーチの測り方）。 */
+    static double reachDistance(LivingEntity self, Entity target) {
+        Location eye = self.getEyeLocation();
+        org.bukkit.util.BoundingBox b = target.getBoundingBox();
+        double x = Math.max(b.getMinX(), Math.min(eye.getX(), b.getMaxX()));
+        double y = Math.max(b.getMinY(), Math.min(eye.getY(), b.getMaxY()));
+        double z = Math.max(b.getMinZ(), Math.min(eye.getZ(), b.getMaxZ()));
+        return Math.sqrt((x - eye.getX()) * (x - eye.getX()) + (y - eye.getY()) * (y - eye.getY())
+                + (z - eye.getZ()) * (z - eye.getZ()));
     }
 
     /**

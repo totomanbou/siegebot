@@ -65,7 +65,7 @@ final class Archers {
                 && p.getLocation().distance(t.getLocation()) <= s.archerRange + 1.0 && p.hasLineOfSight(t);
         // 近すぎる敵から下がっている途中は撃たない。プレイヤーの姿の NPC は向いている方へ歩くので、
         // 敵の方を向かせると下がるはずが敵へ歩いてしまう（試験で確かめた）
-        if (bot.archerBackingOff && bot.npc.getNavigator().isNavigating()) {
+        if (bot.backingOff && bot.npc.getNavigator().isNavigating()) {
             ok = false;
         }
         Vector dir = ok ? aim(bot, p, t, s) : null;

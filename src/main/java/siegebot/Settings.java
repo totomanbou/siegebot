@@ -6,6 +6,7 @@ import java.util.Map;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.inventory.ItemStack;
 
 /** config.yml の内容（読み取り専用）。 */
 public final class Settings {
@@ -89,16 +90,30 @@ public final class Settings {
     /** 弓兵: 狙いのぶれ（バニラのプレイヤーの弓は 1.0。0 で必ず狙ったとおりに飛ぶ）。 */
     public final double archerInaccuracy;
 
+    /** 槍兵: 届くぎりぎりから突くとき、届く距離からこれだけ（ブロック）内側に入ったら止まる。 */
+    public final double spearStopInside;
+    /** 槍兵: 敵が届く距離よりこれだけ（ブロック）内側まで寄ってきたら、下がって間合いを取り直す。 */
+    public final double spearBackOffInside;
+
+    /** config.yml の読み込みで見つかった問題（読めないアイテムなど）。プラグインがログに出す。 */
+    public final java.util.List<String> warnings = new java.util.ArrayList<>();
+
     /** 兵種 1 つ分の設定。 */
     public static final class Unit {
         /** 専用のボットの名前の後ろに付ける文字（「名前の兵」の「の兵」）。 */
         public final String nameSuffix;
-        /** 装備の部位（hand, off_hand, helmet, chestplate, leggings, boots）→ アイテム。 */
-        public final Map<String, Material> equipment;
+        /** 装備の部位（hand, off_hand, helmet, chestplate, leggings, boots）→ アイテム（出すたびに写して使う）。 */
+        public final Map<String, ItemStack> equipment;
+        /** 攻撃の届く距離（ブロック）。剣兵と弓兵は combat.attack-range（弓兵は殴らない）、槍兵は units.spearman.attack-range。 */
+        public final double attackRange;
+        /** 攻撃の間隔（tick）。 */
+        public final int attackDelayTicks;
 
-        Unit(String nameSuffix, Map<String, Material> equipment) {
+        Unit(String nameSuffix, Map<String, ItemStack> equipment, double attackRange, int attackDelayTicks) {
             this.nameSuffix = nameSuffix;
             this.equipment = equipment;
+            this.attackRange = attackRange;
+            this.attackDelayTicks = attackDelayTicks;
         }
     }
 
@@ -149,16 +164,29 @@ public final class Settings {
         ConfigurationSection oldEq = own(c, "equipment");
         units.put(UnitType.SOLDIER, new Unit(
                 c.getString("units.soldier.name-suffix", "の兵"),
-                readEquipment(own(c, "units.soldier.equipment"), oldEq, Map.of(
-                        "hand", Material.IRON_SWORD, "off_hand", Material.SHIELD,
-                        "helmet", Material.IRON_HELMET, "chestplate", Material.IRON_CHESTPLATE,
-                        "leggings", Material.IRON_LEGGINGS, "boots", Material.IRON_BOOTS))));
+                readEquipment("soldier", own(c, "units.soldier.equipment"), oldEq, Map.of(
+                        "hand", "IRON_SWORD", "off_hand", "SHIELD",
+                        "helmet", "IRON_HELMET", "chestplate", "IRON_CHESTPLATE",
+                        "leggings", "IRON_LEGGINGS", "boots", "IRON_BOOTS")),
+                attackRange, attackDelayTicks));
         units.put(UnitType.ARCHER, new Unit(
                 c.getString("units.archer.name-suffix", "の弓兵"),
-                readEquipment(own(c, "units.archer.equipment"), null, Map.of(
-                        "hand", Material.BOW,
-                        "helmet", Material.CHAINMAIL_HELMET, "chestplate", Material.LEATHER_CHESTPLATE,
-                        "leggings", Material.LEATHER_LEGGINGS, "boots", Material.LEATHER_BOOTS))));
+                readEquipment("archer", own(c, "units.archer.equipment"), null, Map.of(
+                        "hand", "BOW",
+                        "helmet", "CHAINMAIL_HELMET", "chestplate", "LEATHER_CHESTPLATE",
+                        "leggings", "LEATHER_LEGGINGS", "boots", "LEATHER_BOOTS")),
+                attackRange, attackDelayTicks));
+        // 槍兵の既定の槍は、本サーバーで槍の見た目になる鉄の斧（custom_model_data の文字 "1"）
+        units.put(UnitType.SPEARMAN, new Unit(
+                c.getString("units.spearman.name-suffix", "の槍兵"),
+                readEquipment("spearman", own(c, "units.spearman.equipment"), null, Map.of(
+                        "hand", "minecraft:iron_axe[custom_model_data={strings:[\"1\"]}]",
+                        "helmet", "IRON_HELMET", "chestplate", "IRON_CHESTPLATE",
+                        "leggings", "CHAINMAIL_LEGGINGS", "boots", "IRON_BOOTS")),
+                Math.max(1.0, Math.min(8.0, c.getDouble("units.spearman.attack-range", 4.5))),
+                Math.max(1, c.getInt("units.spearman.attack-delay-ticks", 22))));
+        spearStopInside = Math.max(0.0, c.getDouble("units.spearman.stop-inside", 0.2));
+        spearBackOffInside = Math.max(spearStopInside + 0.5, c.getDouble("units.spearman.back-off-inside", 1.5));
         UnitType def = UnitType.parse(c.getString("units.default", "soldier"));
         defaultUnit = def == null ? UnitType.SOLDIER : def;
 
@@ -181,31 +209,59 @@ public final class Settings {
     /**
      * 装備の節を読む。sec がなければ fallback の節、それもなければ defaults。
      * 節があれば書いてある部位だけを使う（書いていない部位は何も持たない）。
+     * アイテムは ID（IRON_SWORD・minecraft:iron_sword）か、/give と同じ部品つきの書き方
+     * （minecraft:iron_axe[custom_model_data={strings:["1"]}]）。読めないものは warnings に入れて飛ばす。
      */
-    private static Map<String, Material> readEquipment(ConfigurationSection sec, ConfigurationSection fallback,
-                                                       Map<String, Material> defaults) {
+    private Map<String, ItemStack> readEquipment(String unit, ConfigurationSection sec, ConfigurationSection fallback,
+                                                 Map<String, String> defaults) {
         ConfigurationSection use = sec != null ? sec : fallback;
-        Map<String, Material> r = new LinkedHashMap<>();
+        Map<String, String> specs = new LinkedHashMap<>();
         if (use == null) {
-            for (String slot : new String[] {"hand", "off_hand", "helmet", "chestplate", "leggings", "boots"}) {
+            for (String slot : SLOTS) {
                 if (defaults.containsKey(slot)) {
-                    r.put(slot, defaults.get(slot));
+                    specs.put(slot, defaults.get(slot));
                 }
             }
-            return r;
-        }
-        for (String slot : use.getKeys(false)) {
-            Material m = Material.matchMaterial(String.valueOf(use.getString(slot, "")));
-            if (m != null && m != Material.AIR) {
+        } else {
+            for (String slot : use.getKeys(false)) {
                 String k = slot.toLowerCase(Locale.ROOT);
-                r.put(k.equals("offhand") ? "off_hand" : k, m);
+                specs.put(k.equals("offhand") ? "off_hand" : k, String.valueOf(use.getString(slot, "")));
+            }
+            // 0.6 までの書き方では盾を書かずに自動で持たせていたので、古い節を読んだときは左手が未指定なら盾にする
+            if (sec == null && fallback != null && !specs.containsKey("off_hand") && defaults.containsKey("off_hand")) {
+                specs.put("off_hand", defaults.get("off_hand"));
             }
         }
-        // 0.6 までの書き方では盾を書かずに自動で持たせていたので、古い節を読んだときは左手が未指定なら盾にする
-        if (sec == null && fallback != null && !r.containsKey("off_hand") && defaults.containsKey("off_hand")) {
-            r.put("off_hand", defaults.get("off_hand"));
+        Map<String, ItemStack> r = new LinkedHashMap<>();
+        for (Map.Entry<String, String> e : specs.entrySet()) {
+            ItemStack item = parseItem(e.getValue());
+            if (item == null) {
+                warnings.add("units." + unit + ".equipment." + e.getKey() + " のアイテム「" + e.getValue() + "」が読めません（飛ばします）");
+            } else {
+                r.put(e.getKey(), item);
+            }
         }
         return r;
+    }
+
+    private static final String[] SLOTS = {"hand", "off_hand", "helmet", "chestplate", "leggings", "boots"};
+
+    /** アイテムの ID か部品つきの書き方から。空・AIR・読めなければ null。 */
+    static ItemStack parseItem(String spec) {
+        if (spec == null || spec.isBlank()) {
+            return null;
+        }
+        String t = spec.trim();
+        if (t.indexOf('[') < 0) {
+            Material m = Material.matchMaterial(t);
+            return m == null || m == Material.AIR ? null : new ItemStack(m);
+        }
+        try {
+            ItemStack item = org.bukkit.Bukkit.getItemFactory().createItemStack(t);
+            return item.getType() == Material.AIR ? null : item;
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     public Unit unit(UnitType t) {

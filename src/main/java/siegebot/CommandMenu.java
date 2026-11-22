@@ -171,12 +171,16 @@ public final class CommandMenu implements Listener {
         h.actions.put(slot, action);
     }
 
-    /** ボットの絵: 兵種の武器（弓兵は弓、剣兵は剣）。まだ出ていなければ頭。 */
+    /** ボットの絵: 兵種の武器（剣兵は剣、槍兵は斧、弓兵は弓）。まだ出ていなければ頭。 */
     private static Material icon(SoldierBot b) {
         if (b == null) {
             return Material.PLAYER_HEAD;
         }
-        return b.type() == UnitType.ARCHER ? Material.BOW : Material.IRON_SWORD;
+        return switch (b.type()) {
+            case ARCHER -> Material.BOW;
+            case SPEARMAN -> Material.IRON_AXE;
+            default -> Material.IRON_SWORD;
+        };
     }
 
     private static ItemStack button(Material m, String title, NamedTextColor color, boolean glow, List<String> lore) {

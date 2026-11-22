@@ -90,7 +90,7 @@ shield:
   # 5 だと速い矢（弓を引き切った矢）に間に合わず、盾を上げているのに当たってノックバックする。既定 0 で構えた瞬間から防ぐ
   blocking-delay-ticks: 0
 
-# 兵種。/sb revive <対象> [数] [soldier|archer] と /sb spawn <名前> <陣営> [soldier|archer] で選ぶ
+# 兵種。/sb revive <対象> [数] [soldier|spearman|archer] と /sb spawn <名前> <陣営> [soldier|spearman|archer] で選ぶ
 units:
   # 兵種を書かなかったときに新しく出す兵種
   default: soldier
@@ -98,7 +98,8 @@ units:
   soldier:
     # 専用のボットの名前の後ろに付ける文字（「名前の兵」）
     name-suffix: "の兵"
-    # 装備（アイテムの ID）。部位は hand・off_hand・helmet・chestplate・leggings・boots。不要な部位は行ごと消す
+    # 装備。部位は hand・off_hand・helmet・chestplate・leggings・boots。不要な部位は行ごと消す。
+    # アイテムは ID（IRON_SWORD）か、/give と同じ部品つきの書き方（'minecraft:iron_axe[custom_model_data={strings:["1"]}]'）
     equipment:
       hand: IRON_SWORD
       off_hand: SHIELD
@@ -106,6 +107,24 @@ units:
       chestplate: IRON_CHESTPLATE
       leggings: IRON_LEGGINGS
       boots: IRON_BOOTS
+  # 槍兵: 届く距離が長く（attack-range）、届くぎりぎりの所から突く。盾は持たない
+  spearman:
+    name-suffix: "の槍兵"
+    equipment:
+      # 本サーバーのリソースパックで槍の見た目になる鉄の斧（custom_model_data の文字 "1"）
+      hand: 'minecraft:iron_axe[custom_model_data={strings:["1"]}]'
+      helmet: IRON_HELMET
+      chestplate: IRON_CHESTPLATE
+      leggings: CHAINMAIL_LEGGINGS
+      boots: IRON_BOOTS
+    # 攻撃の届く距離（ブロック。目から相手の当たり判定までの距離。プレイヤーの素手・剣は 3.0）
+    attack-range: 4.5
+    # 攻撃の間隔（tick）。鉄の斧は 22 tick（1.1 秒）より短いと、プレイヤーと同じく力が溜まらず弱くなる
+    attack-delay-ticks: 22
+    # 近づくときは、届く距離よりこれだけ内側に入った所で止まる（ブロック。0.2 なら 4.3 で止まる。止まるまでに少し滑るので、0 にはしない）
+    stop-inside: 0.2
+    # 敵が届く距離よりこれだけ内側まで寄ってきたら（1.5 なら 3.0 より近い）、届くぎりぎりまで下がる
+    back-off-inside: 1.5
   # 弓兵: 離れた所から矢を撃つ。矢は尽きず、拾えない
   archer:
     name-suffix: "の弓兵"

@@ -275,7 +275,7 @@ final class Shields {
         if (t == null || !t.isValid() || t.isDead() || t.getWorld() != p.getWorld()) {
             return false;
         }
-        double r = s.attackRange + MELEE_MARGIN;
+        double r = s.unit(bot.type).attackRange + MELEE_MARGIN;
         return t.getLocation().distanceSquared(p.getLocation()) <= r * r;
     }
 
