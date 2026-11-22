@@ -11,7 +11,8 @@ import org.bukkit.util.Vector;
 /**
  * ボットのエイム（照準）。ボットごとに見えない照準（{@link SoldierBot#aimYaw}・{@link SoldierBot#aimPitch}）を持ち、
  * 毎 tick、狙う向きへ units.&lt;兵種&gt;.aim.turn-speed（度/tick）までしか回らない。照準は units.&lt;兵種&gt;.aim.sway（度）
- * ほどの大きさでゆっくり揺れる。
+ * ほどの大きさでゆっくり揺れ、照準を大きく回した tick ほど大きく揺れる（回した角度 × aim.turn-sway を足す。
+ * 揺れは数 tick かけて元の大きさに戻るので、大きく振り向いた直後の攻撃・矢は外れやすい）。
  *
  * <ul>
  *   <li>剣兵・槍兵: 攻撃のたびに、揺れを含めた照準の線が相手の当たり判定の箱に入っていれば当たり、外れていれば空振り。
@@ -58,17 +59,21 @@ final class Aim {
             bot.aimSet = true;
         }
         Vector want = wantDirection(bot, p, eye);
+        double moved = 0; // 狙って回した角度（相手がいないときに体の向きへ合わせるのは数えない）
         if (want == null) {
             bot.aimYaw = eye.getYaw(); // 狙う相手がいなければ体の向きに合わせる
             bot.aimPitch = eye.getPitch();
         } else {
             double[] w = yawPitch(want.getX(), want.getY(), want.getZ());
             double[] next = turn(bot.aimYaw, bot.aimPitch, w[0], w[1], u.aimTurnSpeed);
+            moved = Math.hypot(wrap(next[0] - bot.aimYaw), next[1] - bot.aimPitch);
             bot.aimYaw = next[0];
             bot.aimPitch = next[1];
         }
+        bot.aimMoved = moved;
         ThreadLocalRandom r = ThreadLocalRandom.current();
-        double[] sway = sway(bot.swayYaw, bot.swayPitch, u.aimSway, r.nextGaussian(), r.nextGaussian());
+        double[] sway = sway(bot.swayYaw, bot.swayPitch, swaySize(u.aimSway, u.aimTurnSway, moved),
+                r.nextGaussian(), r.nextGaussian());
         bot.swayYaw = sway[0];
         bot.swayPitch = sway[1];
     }
@@ -128,10 +133,16 @@ final class Aim {
         Vector want = wantDirection(bot, p, eye);
         String err = want == null || want.lengthSquared() < 1e-9 ? "相手なし"
                 : String.format(java.util.Locale.ROOT, "ずれ%.1f°", error(bot, p, want));
-        return err + String.format(java.util.Locale.ROOT, "(揺れ%.1f°)", Math.hypot(bot.swayYaw, bot.swayPitch));
+        return err + String.format(java.util.Locale.ROOT, "(揺れ%.1f°,回した%.1f°)",
+                Math.hypot(bot.swayYaw, bot.swayPitch), bot.aimMoved);
     }
 
     // ---- 計算だけの部分（テストする） ----
+
+    /** この tick の揺れの大きさ（度）: もとの揺れ + 回した角度 × 1 度あたりの揺れ。負にはしない。 */
+    static double swaySize(double sway, double perDegree, double moved) {
+        return Math.max(0.0, sway + perDegree * Math.max(0.0, moved));
+    }
 
     /** 角度を (-180, 180] に。 */
     static double wrap(double deg) {

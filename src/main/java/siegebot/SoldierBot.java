@@ -65,6 +65,8 @@ public final class SoldierBot {
     double aimYaw;
     double aimPitch;
     boolean aimSet;
+    /** エイム: 直前の tick に照準を回した角度（度。揺れを大きくする量の元。/sb debug 用にも残す）。 */
+    double aimMoved;
     /** エイム: 照準の今の揺れ（度）。 */
     double swayYaw;
     double swayPitch;

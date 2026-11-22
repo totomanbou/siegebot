@@ -527,9 +527,9 @@ public final class SiegeBotCommand implements TabExecutor {
             }
             msg(sender, String.format(Locale.ROOT,
                     "%s: suffix=%s speed=%.2f damage=%.2f defense=%.2f max-health=%.1f attack-range=%.2f attack-delay=%d "
-                            + "aim.turn-speed=%.1f aim.sway=%.2f shield-durability=%s equipment=[%s]",
+                            + "aim.turn-speed=%.1f aim.sway=%.2f aim.turn-sway=%.2f shield-durability=%s equipment=[%s]",
                     t.key(), u.nameSuffix, u.speed, u.damageMultiplier, u.defenseMultiplier, u.maxHealth, u.attackRange,
-                    u.attackDelayTicks, u.aimTurnSpeed, u.aimSway,
+                    u.attackDelayTicks, u.aimTurnSpeed, u.aimSway, u.aimTurnSway,
                     u.shieldDurability > 0 ? String.valueOf(u.shieldDurability) : "盾のまま", String.join(" ", eq)));
         }
         msg(sender, String.format(Locale.ROOT,

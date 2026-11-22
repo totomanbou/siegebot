@@ -258,4 +258,16 @@ class AimTest {
         assertEquals(SWAY_SIZE, stdY, STAT_TOLERANCE, "yaw 標準偏差");
         assertEquals(SWAY_SIZE, stdP, STAT_TOLERANCE, "pitch 標準偏差");
     }
+
+    // ---- swaySize（回した角度で揺れを大きくする） ----
+
+    @Test
+    void swaySizeGrowsWithTurn() {
+        assertEquals(3.0, Aim.swaySize(3.0, 0.2, 0), EPS);       // 回していなければもとの揺れ
+        assertEquals(8.0, Aim.swaySize(3.0, 0.2, 25), EPS);      // 25 度回すと 3 + 25 × 0.2
+        assertEquals(3.0, Aim.swaySize(3.0, 0.0, 25), EPS);      // 0.2 を 0 にすると回しても増えない
+        assertEquals(5.0, Aim.swaySize(0.0, 0.2, 25), EPS);      // もとの揺れ 0 でも回せば揺れる
+        assertEquals(3.0, Aim.swaySize(3.0, 0.2, -5), EPS);      // 負の角度は 0 とみなす
+        assertEquals(0.0, Aim.swaySize(0.0, 0.0, 10), EPS);
+    }
 }
