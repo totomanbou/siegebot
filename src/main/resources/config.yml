@@ -140,6 +140,8 @@ units:
     back-off-inside: 1.5
     # 矢などの脅威がなくなってから盾を下ろすまでの秒数（0 ですぐ下ろす。剣兵は shield.lower-after-seconds）
     shield-lower-after-seconds: 0
+    # true: 敵を追う道に蜘蛛の巣があれば追わない（2 秒後に見直す。届く敵は、巣の向こうでもその場で突く）
+    avoid-cobweb: true
   # 弓兵: 離れた所から矢を撃つ。矢は尽きず、拾えない
   archer:
     name-suffix: "の弓兵"

@@ -570,6 +570,11 @@ public final class SiegeBotCommand implements TabExecutor {
             sb.append(anchor == null ? " anchor=なし" : String.format(Locale.ROOT, " anchor=(%.1f, %.1f, %.1f)",
                     anchor.getX(), anchor.getY(), anchor.getZ()));
             sb.append(" target=").append(b.target == null ? "なし" : b.target.getName());
+            long webNow = org.bukkit.Bukkit.getCurrentTick();
+            long blocked = b.webBlocked.values().stream().filter(u -> u > webNow).count();
+            if (blocked > 0) {
+                sb.append(" 巣で追わない=").append(blocked);
+            }
             sb.append(" nav=").append(b.npc.getNavigator().isNavigating());
             sb.append(" order=").append(b.order().describe());
             long nowTick = org.bukkit.Bukkit.getCurrentTick();

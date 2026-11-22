@@ -95,6 +95,8 @@ public final class Settings {
     /** 槍兵: 敵が届く距離よりこれだけ（ブロック）内側まで寄ってきたら、下がって間合いを取り直す。 */
     public final double spearBackOffInside;
 
+    /** 槍兵: 敵を追う道に蜘蛛の巣があれば追わない。 */
+    public final boolean spearAvoidCobweb;
     /** 槍兵: 脅威がなくなってから盾を下ろすまでの時間（tick。既定 0 = すぐ下ろす）。 */
     public final int spearShieldLowerAfterTicks;
 
@@ -221,6 +223,7 @@ public final class Settings {
                 Math.max(1.0, Math.min(8.0, c.getDouble("units.spearman.attack-range", 4.5))),
                 Math.max(1, c.getInt("units.spearman.attack-delay-ticks", 22))));
         spearStopInside = Math.max(0.0, c.getDouble("units.spearman.stop-inside", 0.2));
+        spearAvoidCobweb = c.getBoolean("units.spearman.avoid-cobweb", true);
         spearShieldLowerAfterTicks = (int) Math.round(Math.max(0.0,
                 c.getDouble("units.spearman.shield-lower-after-seconds", 0.0)) * 20);
         spearBackOffInside = Math.max(spearStopInside + 0.5, c.getDouble("units.spearman.back-off-inside", 1.5));

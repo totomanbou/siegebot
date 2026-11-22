@@ -47,6 +47,8 @@ public final class SoldierBot {
     boolean backingOff;
     /** 槍兵が最後に突いた時刻（サーバーの tick）。 */
     long lastSpearAttackTick = Long.MIN_VALUE / 2;
+    /** 槍兵: 追う道に蜘蛛の巣があったので追わない敵（UUID → この tick まで）。届けばその場で突く。 */
+    final java.util.Map<UUID, Long> webBlocked = new java.util.HashMap<>();
     /** この時刻（サーバーの tick）まで次の矢を引き始めない。 */
     long nextDrawTick;
     /** 狙いの動きの見積もり用: 最後に見た狙いの位置・その時刻・その相手。 */

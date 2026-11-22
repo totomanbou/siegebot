@@ -54,6 +54,9 @@ public final class BotManager {
     public static final int TICK_PERIOD = 10;
     /** 経路があるのにこの tick 数のあいだ動かなければ、経路を取り直す。 */
     static final int STUCK_TICKS = 60;
+    /** 追う道に蜘蛛の巣があるかを調べる間隔（tick）と、見つけた敵を追わないでおく長さ（tick）。 */
+    public static final int CHASE_CHECK_PERIOD = 2;
+    static final int WEB_BLOCK_TICKS = 40;
     /** 見えていなくても気づく距離。 */
     private static final double SENSE_RADIUS = 5.0;
     /** この距離の敵には、持ち場からの距離（leash）に関係なく応戦する。 */
@@ -930,6 +933,14 @@ public final class BotManager {
         if (bot.shieldUp) {
             return; // 盾で矢を防いでいる間は動かない（Shields が止めて矢の方を向かせている）
         }
+        if (webBlocked(bot, target, Bukkit.getCurrentTick())) {
+            // 追う道に蜘蛛の巣がある敵: 近づかない（届けば Spearmen がその場で突く。pickTarget は届くときだけこの敵を選ぶ）
+            if (nav.getEntityTarget() != null) {
+                nav.cancelNavigation();
+            }
+            bot.backingOff = false;
+            return;
+        }
         double reach = s.unit(UnitType.SPEARMAN).attackRange;
         double d = reachDistance(self, target);
         if (d <= reach && self.hasLineOfSight(target)) {
@@ -959,6 +970,110 @@ public final class BotManager {
         if (cur == null || cur.getTarget() != target || cur.isAggressive() || !nav.isNavigating()) {
             nav.setTarget(target, false); // 近づくだけ。突くのは Spearmen
         }
+    }
+
+    /** 追う道に蜘蛛の巣があったので、今は追わない敵か。 */
+    static boolean webBlocked(SoldierBot bot, LivingEntity e, long now) {
+        Long until = bot.webBlocked.get(e.getUniqueId());
+        return until != null && now < until;
+    }
+
+    /** 追う道に巣があったので今は追わず、届く距離にもいない敵か（狙いに選ばない）。 */
+    private boolean chaseBlocked(SoldierBot bot, LivingEntity self, LivingEntity e, long now) {
+        return webBlocked(bot, e, now) && reachDistance(self, e) > plugin.settings().unit(bot.type).attackRange;
+    }
+
+    /**
+     * 槍兵が敵を追っている道（Citizens が引いた経路。近い相手で経路がなければ相手までの直線）に蜘蛛の巣があれば、
+     * 追うのをやめて、その敵を {@link #WEB_BLOCK_TICKS} の間は追わない。{@link #CHASE_CHECK_PERIOD} tick ごとに呼ぶ。
+     */
+    public void checkChasePaths() {
+        Settings s = plugin.settings();
+        long now = Bukkit.getCurrentTick();
+        for (SoldierBot bot : bots.values()) {
+            bot.webBlocked.values().removeIf(until -> until <= now);
+            if (!s.spearAvoidCobweb || bot.type != UnitType.SPEARMAN || !bot.npc.isSpawned()
+                    || !(bot.npc.getEntity() instanceof LivingEntity self)) {
+                continue;
+            }
+            Navigator nav = bot.npc.getNavigator();
+            EntityTarget et = nav.getEntityTarget();
+            if (et == null || !nav.isNavigating() || !(et.getTarget() instanceof LivingEntity target)) {
+                continue;
+            }
+            if (pathHasWeb(self, target, nav)) {
+                bot.webBlocked.put(target.getUniqueId(), now + WEB_BLOCK_TICKS);
+                nav.cancelNavigation();
+            }
+        }
+    }
+
+    /** Citizens が引いた今の経路の節点（足と頭）や斜めにかすめる所、経路がなければ相手までの直線に、蜘蛛の巣があるか。 */
+    static boolean pathHasWeb(LivingEntity self, LivingEntity target, Navigator nav) {
+        net.citizensnpcs.api.ai.PathStrategy ps = nav.getPathStrategy();
+        Iterable<org.bukkit.util.Vector> path = ps == null ? null : ps.getPath();
+        if (path == null || !path.iterator().hasNext()) {
+            return webOnSegment(self.getLocation(), target.getLocation());
+        }
+        org.bukkit.World w = self.getWorld();
+        org.bukkit.util.Vector prev = null;
+        for (org.bukkit.util.Vector v : path) {
+            int x = v.getBlockX();
+            int y = v.getBlockY();
+            int z = v.getBlockZ();
+            if (isWeb(w, x, y, z) || isWeb(w, x, y + 1, z)) {
+                return true;
+            }
+            if (prev != null && prev.getBlockX() != x && prev.getBlockZ() != z) {
+                int py = Math.max(y, prev.getBlockY());
+                if (isWeb(w, prev.getBlockX(), py, z) || isWeb(w, prev.getBlockX(), py + 1, z)
+                        || isWeb(w, x, py, prev.getBlockZ()) || isWeb(w, x, py + 1, prev.getBlockZ())) {
+                    return true;
+                }
+            }
+            prev = v;
+        }
+        return false;
+    }
+
+    /**
+     * a から b へまっすぐ歩いたとき、体（幅 0.6・高さ 1.8）が巣に触れるか。0.25 ブロックごとに調べる。
+     * a で既に触れている巣は数えない（巣から抜け出す向きは追ってよい）。
+     */
+    static boolean webOnSegment(Location a, Location b) {
+        org.bukkit.World w = a.getWorld();
+        Set<Long> atStart = new java.util.HashSet<>();
+        double len = a.distance(b);
+        int n = Math.max(1, (int) Math.ceil(len / 0.25));
+        for (int i = 0; i <= n; i++) {
+            double f = (double) i / n;
+            double x = a.getX() + (b.getX() - a.getX()) * f;
+            double y = a.getY() + (b.getY() - a.getY()) * f;
+            double z = a.getZ() + (b.getZ() - a.getZ()) * f;
+            for (double ox : new double[] {-0.3, 0.3}) {
+                for (double oz : new double[] {-0.3, 0.3}) {
+                    for (double oy : new double[] {0.0, 1.0, 1.79}) {
+                        int bx = (int) Math.floor(x + ox);
+                        int by = (int) Math.floor(y + oy);
+                        int bz = (int) Math.floor(z + oz);
+                        if (w.getBlockAt(bx, by, bz).getType() != Material.COBWEB) {
+                            continue;
+                        }
+                        long k = ((long) bx << 38) ^ ((long) (bz & 0x3FFFFFF) << 12) ^ (by & 0xFFF);
+                        if (i == 0) {
+                            atStart.add(k);
+                        } else if (!atStart.contains(k)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean isWeb(org.bukkit.World w, int x, int y, int z) {
+        return w.getBlockAt(x, y, z).getType() == Material.COBWEB;
     }
 
     /** self の目から target の当たり判定の箱までの距離（プレイヤーのリーチの測り方）。 */
@@ -1043,7 +1158,8 @@ public final class BotManager {
         if (bot.type == UnitType.ARCHER) {
             leash = Math.max(leash, s.archerRange); // 弓兵は持ち場から届く敵も狙う（近づくのは leash の内だけ。archerMove）
         }
-        boolean currentValid = bot.target != null && validTarget(bot, self, bot.target, anchor, leash);
+        boolean currentValid = bot.target != null && validTarget(bot, self, bot.target, anchor, leash)
+                && !chaseBlocked(bot, self, bot.target, now);
         if (currentValid && now - bot.lastRetargetTick < s.retargetTicks) {
             return bot.target;
         }
@@ -1051,7 +1167,7 @@ public final class BotManager {
         LivingEntity best = null;
         double bestD = Double.MAX_VALUE;
         for (LivingEntity e : enemies(bot.side)) {
-            if (!validTarget(bot, self, e, anchor, leash)) {
+            if (!validTarget(bot, self, e, anchor, leash) || chaseBlocked(bot, self, e, now)) {
                 continue;
             }
             double d = e.getLocation().distanceSquared(self.getLocation());

@@ -21,6 +21,7 @@ public final class SiegeBotPlugin extends JavaPlugin {
     private Spearmen spearmen;
     private UnitSelectItem unitItem;
     private BukkitTask spearTask;
+    private BukkitTask chaseTask;
     private CombatCheck combat;
     private PlayerCommand playerCommand;
 
@@ -97,6 +98,11 @@ public final class SiegeBotPlugin extends JavaPlugin {
             spearTask.cancel();
         }
         spearTask = Bukkit.getScheduler().runTaskTimer(this, () -> spearmen.tick(), 40L, Spearmen.TICK_PERIOD);
+        if (chaseTask != null) {
+            chaseTask.cancel();
+        }
+        // 槍兵が蜘蛛の巣のある道で敵を追い始めたら、すぐ止める（行動の判断の 10 tick を待つと巣まで歩いてしまう）
+        chaseTask = Bukkit.getScheduler().runTaskTimer(this, () -> bots.checkChasePaths(), 40L, BotManager.CHASE_CHECK_PERIOD);
     }
 
     /** /sb spawn で出したボット（持ち主なし）を、陣営のリスポーン地点に出す。 */
