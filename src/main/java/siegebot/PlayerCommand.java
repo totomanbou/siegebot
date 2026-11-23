@@ -65,16 +65,11 @@ public final class PlayerCommand implements TabExecutor {
             return true;
         }
         if (args.length >= 1 && args[0].equalsIgnoreCase("units")) {
-            if (!personal()) {
-                tell(p, "専用のボットが無効なので、兵科選択は使えません。", NamedTextColor.RED);
-            } else {
-                menu.openUnits(p, side); // ボットがまだ 1 体もいなくても開ける
-            }
+            menu.openUnits(p, side); // ボットがまだ 1 体もいなくても開ける
             return true;
         }
         if (targets(p, side).isEmpty()) {
-            tell(p, personal() ? "あなたのボットはいません（兵科選択か、コマンドブロックで呼んでください）。"
-                    : side.label() + "のボットがいません。", NamedTextColor.RED);
+            tell(p, "あなたのボットはいません（兵科選択か、コマンドブロックで呼んでください）。", NamedTextColor.RED);
             return true;
         }
         String sub = args.length == 0 ? "menu" : args[0].toLowerCase(Locale.ROOT);
@@ -102,11 +97,6 @@ public final class PlayerCommand implements TabExecutor {
 
     // ---- 指示する相手 ----
 
-    /** 専用のボットが有効か（そのときは自分のボットにだけ指示できる）。 */
-    boolean personal() {
-        return plugin.settings().personalBots;
-    }
-
     /** 自分の専用のボット（このチームのもの、出した順）。なければ空。 */
     List<SoldierBot> ownBots(Player p, Side side) {
         List<SoldierBot> r = new ArrayList<>();
@@ -118,9 +108,9 @@ public final class PlayerCommand implements TabExecutor {
         return r;
     }
 
-    /** 指示する相手に選べるボット: 専用のボットが有効なら自分のボット、無効ならチームのボット全員。 */
+    /** 指示する相手に選べるボット: 自分のボット。 */
     List<SoldierBot> candidates(Player p, Side side) {
-        return personal() ? ownBots(p, side) : plugin.bots().of(side);
+        return ownBots(p, side);
     }
 
     /**
@@ -177,7 +167,7 @@ public final class PlayerCommand implements TabExecutor {
                 : names.size() + " 体（" + String.join("・", names) + "）";
     }
 
-    /** 指示が効くボット: 選んだ相手（全員か、選んだ 1 体・複数体）。専用のボットが有効なら、自分のボットの中から選ぶ。 */
+    /** 指示が効くボット: 選んだ相手（全員か、選んだ 1 体・複数体）。自分のボットの中から選ぶ。 */
     List<SoldierBot> targets(Player p, Side side) {
         java.util.Set<String> names = selectedNames(p, side);
         if (names.isEmpty()) {

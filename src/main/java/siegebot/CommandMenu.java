@@ -61,10 +61,10 @@ public final class CommandMenu implements Listener {
                 Component.text("指揮メニュー（" + side.label() + "）", NamedTextColor.DARK_GRAY));
         h.inventory = inv;
 
-        // ---- 1 段目: 指示する相手（専用のボットが有効なら、自分のボットの中から選ぶ） ----
+        // ---- 1 段目: 指示する相手（自分のボットの中から選ぶ） ----
         String who;
         List<SoldierBot> choices = commands.candidates(p, side);
-        if (commands.personal() && choices.size() <= 1) {
+        if (choices.size() <= 1) {
             // 自分のボットが 1 体なら、選ぶ段は出さずに状態だけを表示する
             SoldierBot own = choices.isEmpty() ? null : choices.get(0);
             who = own == null ? "自分のボット" : own.name();
@@ -75,7 +75,7 @@ public final class CommandMenu implements Listener {
             List<SoldierBot> mine = choices;
             java.util.Set<String> sel = commands.selectedNames(p, side);
             put(h, 0, button(Material.NETHER_STAR, "全員に指示", NamedTextColor.GOLD, sel.isEmpty(),
-                    List.of(commands.personal() ? "自分のボット全員に同じ指示を出す" : "ボット全員に同じ指示を出す",
+                    List.of("自分のボット全員に同じ指示を出す",
                             "ボットの絵をシフト+左クリックすると、何体でも選べる")), () -> {
                         commands.select(p, null);
                         open(p, side);
@@ -243,7 +243,6 @@ public final class CommandMenu implements Listener {
                     case NO_PICKS -> "呼べる回数が残っていません。";
                     case FULL -> "ボットの上限（" + max + " 体）に届いているので呼べません。";
                     case NO_TEAM -> "攻め・守りのどちらのチームにも入っていません。";
-                    case DISABLED -> "専用のボットが無効なので、兵科選択は使えません。";
                     case NO_PLACE -> "出す場所がありません。";
                 };
                 if (text != null) {

@@ -76,7 +76,9 @@ public final class SiegeBotCommand implements TabExecutor {
         msg(sender, "/sb revive <プレイヤー|@p|@a|bots|all> [数] [soldier|spearman|archer] - ボットを参戦させる（倒れていれば戻し、足りなければ出す。"
                 + "コマンドブロック用。数は 1 人あたりの体数。兵種を書くとその兵種だけを数えて出す）");
         msg(sender, "/sb picks <プレイヤー|@p|@a|all> [数|add 数] - 兵科選択で兵を呼べる回数を決める・足す・見る（コマンドブロック用）");
-        msg(sender, "/sb spawn <名前> <attack|defend> [soldier|spearman|archer] - 持ち主のいないボットを出す（出した地点を守る）");
+        if (plugin.settings().testBots) {
+            msg(sender, "/sb spawn <名前> <attack|defend> [soldier|spearman|archer] - 試験用: 持ち主のいないボットを出す（出した地点を守る）");
+        }
         msg(sender, "/sb remove <名前> - ボットを消す");
         msg(sender, "/sb list - ボットの一覧");
         msg(sender, "/sb spawnpoint <attack|defend> [clear | x y z] - リスポーン地点を今いる場所（または座標）にする。clear で消す");
@@ -90,6 +92,10 @@ public final class SiegeBotCommand implements TabExecutor {
     // ---- ボットの出し入れ ----
 
     private void spawn(CommandSender sender, String[] args) {
+        if (!plugin.settings().testBots) {
+            msg(sender, "持ち主のいないボット（/sb spawn）は試験用です。使うには config.yml に test-bots.enabled: true を書いてください。");
+            return;
+        }
         Side side = args.length == 3 || args.length == 4 ? Side.parse(args[2]) : null;
         UnitType type = args.length == 4 ? UnitType.parse(args[3]) : null;
         if (side == null || (args.length == 4 && type == null)) {
@@ -214,18 +220,16 @@ public final class SiegeBotCommand implements TabExecutor {
             String label = switch (e.getKey()) {
                 case NO_TEAM -> "チームなし";
                 case NO_PLACE -> "出す場所がない";
-                case DISABLED -> "専用のボットが無効";
                 case OK -> "";
             };
             parts.add(label + " " + e.getValue().size() + "人（" + String.join("、", e.getValue()) + "）");
         }
-        int adminRevived = 0;
-        if (all || arg.equalsIgnoreCase("bots")) {
-            adminRevived = plugin.spawnSavedBots(); // 倒れて消えた /sb spawn のボットを、data.yml から出し直す
-        }
-
-        if (all || arg.equalsIgnoreCase("bots")) {
+        // 持ち主のいないボット（/sb spawn）は試験用（test-bots.enabled のときだけ）
+        if (plugin.settings().testBots && (all || arg.equalsIgnoreCase("bots"))) {
+            int adminRevived = plugin.spawnSavedBots(); // 倒れて消えた /sb spawn のボットを、data.yml から出し直す
             parts.add("持ち主のいないボットが参戦 " + adminRevived + "体");
+        } else if (arg.equalsIgnoreCase("bots")) {
+            parts.add("持ち主のいないボット（bots）は試験用です。使うには config.yml に test-bots.enabled: true を書いてください");
         }
         msg(sender, parts.isEmpty() ? "対象のプレイヤーがいません。" : String.join(" / ", parts));
     }
@@ -540,10 +544,10 @@ public final class SiegeBotCommand implements TabExecutor {
                 st.archerArrowSpeed, st.archerArrowDamage, st.archerInaccuracy));
         msg(sender, String.format(Locale.ROOT,
                 "combat: engage=%.1f push-leash=%.1f guard-leash=%.1f follow=%.1f arrive=%.1f path=%.0f fall-damage=%b "
-                        + "regen=%.1f/%dt delay=%dt / shield: enabled=%b lower=%dt / personal=%b max=%d / teams=%s,%s",
+                        + "regen=%.1f/%dt delay=%dt / shield: enabled=%b lower=%dt / test-bots=%b max=%d / teams=%s,%s",
                 st.engageRadius, st.pushLeash, st.guardLeash, st.followDistance, st.arriveRadius, st.pathRange, st.fallDamage,
                 st.regenAmount, st.regenIntervalTicks, st.regenDelayTicks, st.shieldEnabled, st.shieldLowerAfterTicks,
-                st.personalBots, st.maxBotsPerPlayer, st.attackTeam, st.defendTeam));
+                st.testBots, st.maxBotsPerPlayer, st.attackTeam, st.defendTeam));
     }
 
     private void debug(CommandSender sender) {

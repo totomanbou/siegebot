@@ -121,7 +121,7 @@ public final class BotManager {
     // ---- 生成・破棄 ----
 
     /**
-     * 持ち主のいないボット（管理者のボット）を作って出す。出した地点を守る。
+     * 持ち主のいないボット（試験用。test-bots.enabled のときだけ /sb spawn から出す）を作って出す。出した地点を守る。
      *
      * @param fallback リスポーン地点が未設定のときに出す場所（null 可）
      * @return 作ったボット。同名がいる・出す場所がない場合は null
@@ -131,11 +131,13 @@ public final class BotManager {
     }
 
     /**
-     * ボットを作って出す。持ち主がいれば持ち主に追従し、いなければ出した地点を守る（どちらも持ち場優先）。
+     * 持ち主のボットを作って出す。持ち主に追従する（持ち場優先）。
      *
-     * @param owner     持ち主の UUID（管理者のボットは null）
-     * @param ownerName 持ち主の名前（管理者のボットは null）
+     * @param fallback  リスポーン地点が未設定のときに出す場所（null 可）
+     * @param owner     持ち主の UUID
+     * @param ownerName 持ち主の名前
      * @param type      兵種（null なら units.default）
+     * @return 作ったボット。同名がいる・出す場所がない場合は null
      */
     public SoldierBot spawn(String name, Side side, Location fallback, UUID owner, String ownerName, UnitType type) {
         if (type == null) {
@@ -223,14 +225,6 @@ public final class BotManager {
      * 新しく出すことはしない（出すのは {@link #revive} だけ。コマンドブロックの /sb revive から呼ぶ）。
      */
     public void syncPersonalBots() {
-        if (!plugin.settings().personalBots) {
-            for (SoldierBot b : new ArrayList<>(bots.values())) {
-                if (b.owner != null) {
-                    remove(b.name);
-                }
-            }
-            return;
-        }
         List<UUID> online = new ArrayList<>();
         for (Player p : Bukkit.getOnlinePlayers()) {
             online.add(p.getUniqueId());
@@ -262,9 +256,7 @@ public final class BotManager {
             /** 攻め・守りのどちらのチームにも入っていない */
             NO_TEAM,
             /** 出す場所が決まらず、1 体も出せなかった */
-            NO_PLACE,
-            /** personal-bots.enabled が false */
-            DISABLED
+            NO_PLACE
         }
 
         static ReviveReport of(Status s) {
@@ -283,9 +275,6 @@ public final class BotManager {
      * 手を付けない。全兵種の合計は max-per-player を超えない。type が null なら兵種を問わず数え、新しく出すのは units.default の兵種。
      */
     public ReviveReport revive(Player p, Integer count, UnitType type) {
-        if (!plugin.settings().personalBots) {
-            return ReviveReport.of(ReviveReport.Status.DISABLED);
-        }
         Side side = sideOf(p);
         if (side == null) {
             return ReviveReport.of(ReviveReport.Status.NO_TEAM);
@@ -364,8 +353,6 @@ public final class BotManager {
         FULL,
         /** 攻め・守りのどちらのチームにも入っていない */
         NO_TEAM,
-        /** personal-bots.enabled が false */
-        DISABLED,
         /** 出す場所が決まらなかった */
         NO_PLACE
     }
@@ -375,9 +362,6 @@ public final class BotManager {
      * 呼べなかったときは回数を使わない。
      */
     public SummonResult summon(Player p, UnitType type) {
-        if (!plugin.settings().personalBots) {
-            return SummonResult.DISABLED;
-        }
         Side side = sideOf(p);
         if (side == null) {
             return SummonResult.NO_TEAM;
@@ -405,7 +389,7 @@ public final class BotManager {
 
     /**
      * ボットが倒れたら、すぐ（次の tick に）消す。指揮メニューの一覧からも外れる。蘇生はしない
-     * （/sb revive・兵科選択で新しく出す）。/sb spawn で出したボットは data.yml に残るので、/sb revive bots で出し直せる。
+     * （/sb revive・兵科選択で新しく出す）。
      */
     public void onBotDied(SoldierBot bot) {
         Bukkit.getScheduler().runTask(plugin, () -> {
@@ -713,8 +697,8 @@ public final class BotManager {
     }
 
     /**
-     * ボットの発言を送る。持ち主のいるボットは持ち主にだけ（オフラインなら誰にも送らない）、
-     * 持ち主のいないボット（/sb spawn で出したもの）は同じ陣営のプレイヤーに送る。
+     * ボットの発言を送る。持ち主にだけ（オフラインなら誰にも送らない）。
+     * 持ち主のいないボットは（通常はいないが）同じ陣営のプレイヤーに送る。
      */
     public void say(SoldierBot bot, String text) {
         if (text == null || text.isBlank()) {
@@ -727,7 +711,7 @@ public final class BotManager {
 
     /**
      * ボットに関する知らせを送る。持ち主がいれば持ち主にだけ（いなければ誰にも送らない）、
-     * 持ち主のいないボット（/sb spawn）なら同じ陣営のプレイヤー全員に送る。
+     * 持ち主のいないボット（通常はいない）なら同じ陣営のプレイヤー全員に送る。
      */
     public void sendToAudience(SoldierBot bot, Component msg) {
         if (bot.owner != null) {

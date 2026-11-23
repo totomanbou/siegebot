@@ -1,22 +1,23 @@
 # SiegeBot の設定。変更したら /siegebot reload で読み直せます。
-# リスポーン地点と /sb spawn で出したボットは、ゲーム内コマンドで設定し、data.yml に保存されます。
+# リスポーン地点は、ゲーム内コマンドで設定し、data.yml に保存されます。
 
 # 攻め・守りに対応するスコアボードのチーム名（/team で作ったチームの名前）
 teams:
   attack: "Attack"
   defend: "Defence"
 
-# ボットは自動では出ない。倒れたボットはすぐ消える（蘇生しない）。コマンドブロックの /sb revive <@p|@a|プレイヤー|bots|all> か、
+# ボットは自動では出ない。倒れたボットはすぐ消える（蘇生しない）。コマンドブロックの /sb revive <@p|@a|プレイヤー|all> か、
 # /sb picks で決めた回数の兵科選択で、新しく出して参戦させる。
 # 出す場所は陣営のリスポーン地点（/sb spawnpoint）、未設定なら持ち主の横。持ち主が倒れるとボットも倒れる。
 personal-bots:
-  # true: チームに入っているプレイヤーに、専用のボット（「名前の兵」）を出す。1 人が複数体持てる。
-  #       抜けると消える。指示（指揮メニュー・/sbc）は自分のボットにだけ効く。
-  #       /sb spawn で出したボットは持ち主がいないので、誰の指示も受けず、出した地点を守る。
-  # false: 専用のボットは出さず、チームのボットにチームの誰でも指示できる。
-  enabled: true
+  # チームに入っているプレイヤーは、専用のボット（「名前の兵」）を持てる。指示は自分のボットにだけ効く。
   # 1 人が持てるボットの上限（1〜9）。何体出すかはコマンドブロックの /sb revive <対象> <数> で決める
   max-per-player: 5
+
+# 試験用: true にすると、持ち主のいないボット（/sb spawn で出し、出した地点を守る。data.yml に保存され起動時に出る）を使える。
+# 本サーバーでは false のまま（書かなければ false）
+test-bots:
+  enabled: false
 
 orders:
   # 「視点の先を守れ」で狙える最大の距離（ブロック）
@@ -91,7 +92,7 @@ shield:
   # 5 だと速い矢（弓を引き切った矢）に間に合わず、盾を上げているのに当たってノックバックする。既定 0 で構えた瞬間から防ぐ
   blocking-delay-ticks: 0
 
-# 兵種。/sb revive <対象> [数] [soldier|spearman|archer] と /sb spawn <名前> <陣営> [soldier|spearman|archer] で選ぶ
+# 兵種。/sb revive <対象> [数] [soldier|spearman|archer] で選ぶ
 units:
   # 兵種を書かなかったときに新しく出す兵種
   default: soldier

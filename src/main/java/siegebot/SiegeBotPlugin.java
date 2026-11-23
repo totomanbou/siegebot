@@ -113,10 +113,13 @@ public final class SiegeBotPlugin extends JavaPlugin {
     }
 
     /**
-     * /sb spawn で出したボット（持ち主なし）のうち、今いないものを陣営のリスポーン地点に出す。
+     * /sb spawn で出したボット（持ち主なし。試験用で、test-bots.enabled のときだけ）のうち、今いないものを陣営のリスポーン地点に出す。
      * 起動時と、/sb revive bots・all（倒れて消えたものを出し直す）で呼ぶ。出した数を返す。
      */
     public int spawnSavedBots() {
+        if (!settings.testBots) {
+            return 0; // 持ち主のいないボットは試験用（test-bots.enabled）。data.yml の一覧は消さずに残す
+        }
         int n = 0;
         for (Map.Entry<String, Side> e : data.bots().entrySet()) {
             if (bots.get(e.getKey()) != null) {

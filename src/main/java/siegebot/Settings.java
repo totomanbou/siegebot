@@ -14,8 +14,8 @@ public final class Settings {
     public final String attackTeam;
     public final String defendTeam;
 
-    /** プレイヤー 1 人に 1 体の専用のボットを出し、指示は自分のボットにだけ効くようにする。 */
-    public final boolean personalBots;
+    /** 試験用: 持ち主のいないボット（/sb spawn・/sb revive bots・data.yml の一覧）を使う。本サーバーでは false のまま。 */
+    public final boolean testBots;
     /** 1 人が持てる専用のボットの上限（1〜9）。 */
     public final int maxBotsPerPlayer;
     /** 「視点の先を守れ」で狙える最大の距離（ブロック）。 */
@@ -70,7 +70,7 @@ public final class Settings {
 
     /** 兵種ごとの設定（全兵種が入っている）。 */
     public final Map<UnitType, Unit> units = new java.util.EnumMap<>(UnitType.class);
-    /** /sb revive・/sb spawn で兵種を省いたときに新しく出す兵種。 */
+    /** /sb revive で兵種を省いたときに新しく出す兵種。 */
     public final UnitType defaultUnit;
 
     /** 弓兵: 矢を撃つ最大の距離（ブロック）。これより遠い・見えない敵へは近づく。 */
@@ -176,7 +176,10 @@ public final class Settings {
         attackTeam = c.getString("teams.attack", "Attack");
         defendTeam = c.getString("teams.defend", "Defence");
 
-        personalBots = c.getBoolean("personal-bots.enabled", true);
+        if (c.contains("personal-bots.enabled", true) && !c.getBoolean("personal-bots.enabled")) {
+            warnings.add("personal-bots.enabled: false は廃止しました（ボットは常にプレイヤーの専用のボットです）。この行は消してください。");
+        }
+        testBots = c.getBoolean("test-bots.enabled", false);
         maxBotsPerPlayer = Math.max(1, Math.min(9, c.getInt("personal-bots.max-per-player", 5)));
         holdMaxDistance = Math.max(4, c.getDouble("orders.hold-max-distance", 48));
         callCooldownTicks = (int) Math.round(Math.max(0, c.getDouble("orders.call-cooldown-seconds", 0)) * 20);
