@@ -230,10 +230,10 @@ public final class CommandMenu implements Listener {
                 }
             }
             List<String> lore = new ArrayList<>();
-            lore.add("持っている: " + have + " 体");
-            lore.add(left <= 0 ? "呼べる回数が残っていない"
-                    : mine.size() >= max ? "上限（" + max + " 体）に届いているので呼べない"
-                    : "押すと 1 回使って、" + t.label() + "を 1 体呼ぶ");
+            lore.add("現在: " + have + " 体");
+            if (left > 0 && mine.size() >= max) {
+                lore.add("上限（" + max + " 体）に届いているので呼べない");
+            }
             ItemStack icon = unitIcon(t);
             put(h, slots[i], decorate(icon, t.label(), NamedTextColor.AQUA, lore), () -> {
                 BotManager.SummonResult r = plugin.bots().summon(p, t);
@@ -259,8 +259,7 @@ public final class CommandMenu implements Listener {
             });
         }
         put(h, 7, button(Material.PAPER, "残り " + left + " 回", left > 0 ? NamedTextColor.GREEN : NamedTextColor.RED, false,
-                List.of("兵科を選んで兵を呼べる回数（コマンドブロックで決まる）",
-                        "ボット: " + mine.size() + " / " + max + " 体")), () -> { });
+                List.of()), () -> { });
         p.openInventory(h.inventory);
     }
 
