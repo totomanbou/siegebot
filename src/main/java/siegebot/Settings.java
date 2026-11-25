@@ -3,6 +3,7 @@ package siegebot;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Function;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
@@ -16,7 +17,7 @@ public final class Settings {
 
     /** 試験用: 持ち主のいないボット（/sb spawn・/sb revive bots・data.yml の一覧）を使う。本サーバーでは false のまま。 */
     public final boolean testBots;
-    /** 1 人が持てる専用のボットの上限（1〜9）。 */
+    /** 1 人が持てる専用のボットの上限（1〜30）。 */
     public final int maxBotsPerPlayer;
     /** 「視点の先を守れ」で狙える最大の距離（ブロック）。 */
     public final double holdMaxDistance;
@@ -27,7 +28,7 @@ public final class Settings {
     /** 「退却」で戻る途中、この時間（tick）たっても着かなければ退却をやめる。 */
     public final int retreatTimeoutTicks;
 
-    /** true: ボットの頭の上の名前を同じ陣営のプレイヤーにだけ見せる。false: 全員に見せる（Citizens の表示）。 */
+    /** true: ボットの頭の上の名前を同じ陣営のプレイヤーにだけ見せる。false: 全員に見せる。 */
     public final boolean nameTagTeamOnly;
 
     public final double engageRadius;
@@ -35,6 +36,10 @@ public final class Settings {
     public final double guardLeash;
     public final double followDistance;
     public final double arriveRadius;
+    /** ボットどうしが重ならないように押し分ける（separation.enabled）。 */
+    public final boolean separationEnabled;
+    /** 押し分けるときの最小の水平距離（ブロック。0.6〜1.5）。 */
+    public final double separationMinDistance;
     public final float pathRange;
     /** 経路探索で飛び降りてよい高さ（ブロック）。 */
     public final int maxFallDistance;
@@ -89,6 +94,8 @@ public final class Settings {
     public final double archerArrowDamage;
     /** 弓兵: 狙いのぶれ（バニラのプレイヤーの弓は 1.0。0 で必ず狙ったとおりに飛ぶ）。 */
     public final double archerInaccuracy;
+    /** 弓兵: 移動している敵への先読みの割合（1.0 で正確に先読み、0.0 で先読みしない。0.0〜1.5）。units.archer.aim.lead-factor。 */
+    public final double archerLeadFactor;
 
     /** 槍兵: 届くぎりぎりから突くとき、届く距離からこれだけ（ブロック）内側に入ったら止まる。 */
     public final double spearStopInside;
@@ -127,12 +134,14 @@ public final class Settings {
         public final double aimSway;
         /** エイム: 照準を 1 tick に 1 度回すごとに、その tick の揺れに足す大きさ（度）。aim.turn-sway。 */
         public final double aimTurnSway;
+        /** エイム: 反応の遅れ（tick。0 で遅れなし。0〜20）。aim.reaction-ticks。 */
+        public final int aimReactionTicks;
         /** 盾の耐久（防げる量。0 なら盾のアイテムのまま = バニラは 336）。shield-durability。 */
         public final int shieldDurability;
 
         Unit(String nameSuffix, Map<String, ItemStack> equipment, double attackRange, int attackDelayTicks,
              float speed, double damageMultiplier, double defenseMultiplier, double maxHealth,
-             double aimTurnSpeed, double aimSway, double aimTurnSway, int shieldDurability) {
+             double aimTurnSpeed, double aimSway, double aimTurnSway, int aimReactionTicks, int shieldDurability) {
             this.nameSuffix = nameSuffix;
             this.equipment = equipment;
             this.attackRange = attackRange;
@@ -144,6 +153,7 @@ public final class Settings {
             this.aimTurnSpeed = aimTurnSpeed;
             this.aimSway = aimSway;
             this.aimTurnSway = aimTurnSway;
+            this.aimReactionTicks = aimReactionTicks;
             this.shieldDurability = shieldDurability;
         }
     }
@@ -157,10 +167,13 @@ public final class Settings {
         return c.contains(path, true) ? c.getDouble(path, fallback) : fallback;
     }
 
-    /** turnSpeed・sway・turnSway・shieldDurability は、その兵種の aim.turn-speed・aim.sway・aim.turn-sway・shield-durability の既定。 */
+    /**
+     * turnSpeed・sway・turnSway・reactionTicks・shieldDurability は、その兵種の
+     * aim.turn-speed・aim.sway・aim.turn-sway・aim.reaction-ticks・shield-durability の既定。
+     */
     private Unit unit(FileConfiguration c, String unit, String suffix, Map<String, ItemStack> eq,
                       double attackRange, int attackDelayTicks, double turnSpeed, double sway, double turnSway,
-                      int shieldDurability) {
+                      int reactionTicks, int shieldDurability) {
         return new Unit(suffix, eq, attackRange, attackDelayTicks,
                 (float) over(c, unit, "speed", speed),
                 Math.max(0.0, over(c, unit, "damage-multiplier", damageMultiplier)),
@@ -169,10 +182,19 @@ public final class Settings {
                 over(c, unit, "aim.turn-speed", turnSpeed),
                 Math.max(0.0, Math.min(45.0, over(c, unit, "aim.sway", sway))),
                 Math.max(0.0, Math.min(5.0, over(c, unit, "aim.turn-sway", turnSway))),
+                (int) Math.max(0, Math.min(20, Math.round(over(c, unit, "aim.reaction-ticks", reactionTicks)))),
                 (int) Math.max(0, Math.min(100000, Math.round(over(c, unit, "shield-durability", shieldDurability)))));
     }
 
+    /** アイテムの文字列を読む関数（本番は {@link #parseItem}。試験では ItemStack を作らない関数に替える）。 */
+    private final Function<String, ItemStack> itemParser;
+
     public Settings(FileConfiguration c) {
+        this(c, Settings::parseItem);
+    }
+
+    Settings(FileConfiguration c, Function<String, ItemStack> itemParser) {
+        this.itemParser = itemParser;
         attackTeam = c.getString("teams.attack", "Attack");
         defendTeam = c.getString("teams.defend", "Defence");
 
@@ -180,7 +202,7 @@ public final class Settings {
             warnings.add("personal-bots.enabled: false は廃止しました（ボットは常にプレイヤーの専用のボットです）。この行は消してください。");
         }
         testBots = c.getBoolean("test-bots.enabled", false);
-        maxBotsPerPlayer = Math.max(1, Math.min(9, c.getInt("personal-bots.max-per-player", 5)));
+        maxBotsPerPlayer = Math.max(1, Math.min(30, c.getInt("personal-bots.max-per-player", 5)));
         holdMaxDistance = Math.max(4, c.getDouble("orders.hold-max-distance", 48));
         callCooldownTicks = (int) Math.round(Math.max(0, c.getDouble("orders.call-cooldown-seconds", 0)) * 20);
         callBlockedInCombat = c.getBoolean("orders.call-blocked-in-combat", true);
@@ -193,6 +215,10 @@ public final class Settings {
         guardLeash = c.getDouble("combat.guard-leash", 8);
         followDistance = c.getDouble("combat.follow-distance", 4);
         arriveRadius = c.getDouble("combat.arrive-radius", 3);
+        separationEnabled = c.getBoolean("separation.enabled", true);
+        // 上限は横隊の間隔より少し小さく（横隊の位置どうしが押し合わないように）
+        separationMinDistance = Math.max(0.6, Math.min(Formation.FORMATION_SPACING - 0.1,
+                c.getDouble("separation.min-distance", 0.9)));
         pathRange = (float) c.getDouble("combat.path-range", 96);
         maxFallDistance = Math.max(0, c.getInt("combat.max-fall-distance", 384));
         fallDamage = c.getBoolean("combat.fall-damage", true);
@@ -222,30 +248,20 @@ public final class Settings {
         ConfigurationSection oldEq = own(c, "equipment");
         units.put(UnitType.SOLDIER, unit(c, "soldier",
                 c.getString("units.soldier.name-suffix", "の兵"),
-                readEquipment("soldier", own(c, "units.soldier.equipment"), oldEq, Map.of(
-                        "hand", "IRON_SWORD", "off_hand", "SHIELD",
-                        "helmet", "IRON_HELMET", "chestplate", "IRON_CHESTPLATE",
-                        "leggings", "IRON_LEGGINGS", "boots", "IRON_BOOTS")),
+                readEquipment("soldier", own(c, "units.soldier.equipment"), oldEq, SOLDIER_EQUIPMENT),
                 Math.max(1.0, over(c, "soldier", "attack-range", attackRange)),
                 Math.max(1, (int) Math.round(over(c, "soldier", "attack-delay-ticks", attackDelayTicks))),
-                25.0, 3.0, 0.2, 0));
+                15.0, 5.5, 0.8, 2, 0));
         units.put(UnitType.ARCHER, unit(c, "archer",
                 c.getString("units.archer.name-suffix", "の弓兵"),
-                readEquipment("archer", own(c, "units.archer.equipment"), null, Map.of(
-                        "hand", "BOW",
-                        "helmet", "CHAINMAIL_HELMET", "chestplate", "LEATHER_CHESTPLATE",
-                        "leggings", "LEATHER_LEGGINGS", "boots", "LEATHER_BOOTS")),
-                attackRange, attackDelayTicks, 12.0, 0.5, 0.3, 0));
-        // 槍兵の既定の槍は、本サーバーで槍の見た目になる鉄の斧（custom_model_data の文字 "1"）
+                readEquipment("archer", own(c, "units.archer.equipment"), null, ARCHER_EQUIPMENT),
+                attackRange, attackDelayTicks, 9.0, 1.8, 1.0, 2, 0));
         units.put(UnitType.SPEARMAN, unit(c, "spearman",
                 c.getString("units.spearman.name-suffix", "の槍兵"),
-                readEquipment("spearman", own(c, "units.spearman.equipment"), null, Map.of(
-                        "hand", "minecraft:iron_axe[custom_model_data={strings:[\"1\"]}]", "off_hand", "SHIELD",
-                        "helmet", "IRON_HELMET", "chestplate", "IRON_CHESTPLATE",
-                        "leggings", "CHAINMAIL_LEGGINGS", "boots", "IRON_BOOTS")),
+                readEquipment("spearman", own(c, "units.spearman.equipment"), null, SPEARMAN_EQUIPMENT),
                 Math.max(1.0, Math.min(8.0, c.getDouble("units.spearman.attack-range", 4.5))),
                 Math.max(1, c.getInt("units.spearman.attack-delay-ticks", 22)),
-                20.0, 2.0, 0.2, 168)); // 槍兵の盾はバニラ（336）の半分
+                12.0, 3.8, 0.7, 2, 168)); // 槍兵の盾はバニラ（336）の半分
         spearStopInside = Math.max(0.0, c.getDouble("units.spearman.stop-inside", 0.2));
         spearAvoidCobweb = c.getBoolean("units.spearman.avoid-cobweb", true);
         spearShieldLowerAfterTicks = (int) Math.round(Math.max(0.0,
@@ -263,6 +279,7 @@ public final class Settings {
         archerArrowSpeed = Math.max(0.5, Math.min(5.0, c.getDouble("units.archer.arrow-speed", 3.0)));
         archerArrowDamage = Math.max(0.0, c.getDouble("units.archer.arrow-damage", 3.0));
         archerInaccuracy = Math.max(0.0, c.getDouble("units.archer.inaccuracy", 1.0));
+        archerLeadFactor = Math.max(0.0, Math.min(1.5, c.getDouble("units.archer.aim.lead-factor", 0.7)));
     }
 
     /** サーバーの config.yml に書いてある節（jar の既定だけにある節は null）。 */
@@ -288,8 +305,7 @@ public final class Settings {
             }
         } else {
             for (String slot : use.getKeys(false)) {
-                String k = slot.toLowerCase(Locale.ROOT);
-                specs.put(k.equals("offhand") ? "off_hand" : k, String.valueOf(use.getString(slot, "")));
+                specs.put(normalizeSlotKey(slot), String.valueOf(use.getString(slot, "")));
             }
             // 0.6 までの書き方では盾を書かずに自動で持たせていたので、古い節を読んだときは左手が未指定なら盾にする
             if (sec == null && fallback != null && !specs.containsKey("off_hand") && defaults.containsKey("off_hand")) {
@@ -298,7 +314,10 @@ public final class Settings {
         }
         Map<String, ItemStack> r = new LinkedHashMap<>();
         for (Map.Entry<String, String> e : specs.entrySet()) {
-            ItemStack item = parseItem(e.getValue());
+            if (isExplicitEmptyItem(e.getValue())) {
+                continue; // 空・AIR・NONE は「何も持たない」の明示（警告しない）
+            }
+            ItemStack item = itemParser.apply(e.getValue());
             if (item == null) {
                 warnings.add("units." + unit + ".equipment." + e.getKey() + " のアイテム「" + e.getValue() + "」が読めません（飛ばします）");
             } else {
@@ -309,6 +328,119 @@ public final class Settings {
     }
 
     private static final String[] SLOTS = {"hand", "off_hand", "helmet", "chestplate", "leggings", "boots"};
+
+    private static final Map<String, String> SOLDIER_EQUIPMENT = Map.of(
+            "hand", "IRON_SWORD", "off_hand", "SHIELD",
+            "helmet", "IRON_HELMET", "chestplate", "IRON_CHESTPLATE",
+            "leggings", "IRON_LEGGINGS", "boots", "IRON_BOOTS");
+    private static final Map<String, String> ARCHER_EQUIPMENT = Map.of(
+            "hand", "BOW",
+            "helmet", "CHAINMAIL_HELMET", "chestplate", "LEATHER_CHESTPLATE",
+            "leggings", "LEATHER_LEGGINGS", "boots", "LEATHER_BOOTS");
+    // 槍兵の既定の槍は、本サーバーで槍の見た目になる鉄の斧（custom_model_data の文字 "1"）
+    private static final Map<String, String> SPEARMAN_EQUIPMENT = Map.of(
+            "hand", "minecraft:iron_axe[custom_model_data={strings:[\"1\"]}]", "off_hand", "SHIELD",
+            "helmet", "IRON_HELMET", "chestplate", "IRON_CHESTPLATE",
+            "leggings", "CHAINMAIL_LEGGINGS", "boots", "IRON_BOOTS");
+
+    /** 兵種ごとの組み込みの既定の装備（部位 → アイテムの書き方。hand, off_hand, ... の順）。 */
+    static Map<String, String> defaultEquipment(UnitType type) {
+        Map<String, String> src = type == UnitType.ARCHER ? ARCHER_EQUIPMENT
+                : type == UnitType.SPEARMAN ? SPEARMAN_EQUIPMENT : SOLDIER_EQUIPMENT;
+        Map<String, String> r = new LinkedHashMap<>();
+        for (String slot : SLOTS) {
+            if (src.containsKey(slot)) {
+                r.put(slot, src.get(slot));
+            }
+        }
+        return r;
+    }
+
+    /** 「何も持たない」の明示: null・空白のみ・AIR・minecraft:air・NONE（大文字小文字は問わない）。 */
+    static boolean isExplicitEmptyItem(String spec) {
+        if (spec == null) {
+            return true;
+        }
+        String t = spec.trim();
+        return t.isEmpty() || t.equalsIgnoreCase("AIR") || t.equalsIgnoreCase("minecraft:air") || t.equalsIgnoreCase("NONE");
+    }
+
+    /** 装備の部位名を小文字にし、offhand は off_hand にそろえる。 */
+    static String normalizeSlotKey(String slot) {
+        String k = slot.toLowerCase(Locale.ROOT);
+        return k.equals("offhand") ? "off_hand" : k;
+    }
+
+    private static final java.util.Set<String> KNOWN_KEYS = java.util.Set.of(
+            "teams.attack", "teams.defend",
+            "personal-bots.max-per-player", "personal-bots.enabled",
+            "test-bots.enabled",
+            "orders.hold-max-distance", "orders.call-cooldown-seconds", "orders.call-blocked-in-combat",
+            "orders.retreat-timeout-seconds",
+            "name-tag.visible-to",
+            "combat.engage-radius", "combat.push-leash", "combat.guard-leash", "combat.follow-distance",
+            "combat.arrive-radius", "combat.path-range", "combat.max-fall-distance", "combat.fall-damage",
+            "combat.regen-amount", "combat.regen-interval-seconds", "combat.regen-delay-seconds", "combat.speed",
+            "combat.damage-multiplier", "combat.defense-multiplier", "combat.retarget-seconds",
+            "combat.attack-range", "combat.attack-delay-ticks", "combat.pathfinder",
+            "separation.enabled", "separation.min-distance",
+            "shield.enabled", "shield.detect-radius", "shield.move-speed-multiplier", "shield.lower-after-seconds",
+            "shield.blocking-delay-ticks",
+            "units.default");
+    private static final java.util.Set<String> UNIT_NAMES = java.util.Set.of("soldier", "spearman", "archer");
+    private static final java.util.Set<String> UNIT_KEYS = java.util.Set.of(
+            "name-suffix", "speed", "damage-multiplier", "defense-multiplier", "max-health", "attack-range",
+            "attack-delay-ticks", "shield-durability",
+            "aim.turn-speed", "aim.sway", "aim.turn-sway", "aim.reaction-ticks", "equipment");
+    private static final java.util.Set<String> SPEARMAN_KEYS = java.util.Set.of(
+            "stop-inside", "back-off-inside", "avoid-cobweb", "shield-lower-after-seconds");
+    private static final java.util.Set<String> ARCHER_KEYS = java.util.Set.of(
+            "range", "min-distance", "keep-distance", "draw-ticks", "shot-interval-ticks", "arrow-speed",
+            "arrow-damage", "inaccuracy", "aim.lead-factor");
+    private static final java.util.Set<String> EQUIPMENT_SLOTS = java.util.Set.of(
+            "hand", "off_hand", "offhand", "helmet", "chestplate", "leggings", "boots");
+
+    /** config.yml で意味のあるパス（葉。units.&lt;兵種&gt;.equipment の節そのものも含む）か。 */
+    static boolean isKnownKey(String path) {
+        if (path == null) {
+            return false;
+        }
+        if (KNOWN_KEYS.contains(path)) {
+            return true;
+        }
+        if (path.startsWith("equipment.")) { // 0.6 までの書き方
+            return EQUIPMENT_SLOTS.contains(path.substring("equipment.".length()).toLowerCase(Locale.ROOT));
+        }
+        if (!path.startsWith("units.")) {
+            return false;
+        }
+        String[] parts = path.split("\\.", 3);
+        if (parts.length < 3 || !UNIT_NAMES.contains(parts[1])) {
+            return false;
+        }
+        String unit = parts[1];
+        String rest = parts[2];
+        if (UNIT_KEYS.contains(rest)
+                || (unit.equals("spearman") && SPEARMAN_KEYS.contains(rest))
+                || (unit.equals("archer") && ARCHER_KEYS.contains(rest))) {
+            return true;
+        }
+        return rest.startsWith("equipment.")
+                && EQUIPMENT_SLOTS.contains(rest.substring("equipment.".length()).toLowerCase(Locale.ROOT));
+    }
+
+    /** マップ・陣営の上書きに書いてよいパス（旧 0.6 の equipment.* と廃止の personal-bots.enabled は不可）。 */
+    static boolean isAllowedInOverride(String path) {
+        return isKnownKey(path) && !path.startsWith("equipment.") && !path.equals("personal-bots.enabled");
+    }
+
+    /** sides.&lt;side&gt; に書いてよいパス（反対の陣営のチーム名は不可）。 */
+    static boolean isAllowedInSide(Side side, String path) {
+        if (!isAllowedInOverride(path)) {
+            return false;
+        }
+        return !path.equals(side == Side.ATTACK ? "teams.defend" : "teams.attack");
+    }
 
     /** アイテムの ID か部品つきの書き方から。空・AIR・読めなければ null。 */
     static ItemStack parseItem(String spec) {
@@ -330,6 +462,16 @@ public final class Settings {
 
     public Unit unit(UnitType t) {
         return units.get(t == null ? defaultUnit : t);
+    }
+
+    /** 脅威がなくなってから盾を下ろすまでの時間（tick）。槍兵だけ units.spearman.shield-lower-after-seconds。 */
+    public int shieldLowerAfterTicks(UnitType type) {
+        return type == UnitType.SPEARMAN ? spearShieldLowerAfterTicks : shieldLowerAfterTicks;
+    }
+
+    /** 見えて届く敵なら構えや持ち場に関係なく狙う距離（ブロック）。遠くから撃つ弓兵だけ units.archer.range、それ以外は 0。 */
+    public double rangedEngageRadius(UnitType type) {
+        return type == UnitType.ARCHER ? archerRange : 0.0;
     }
 
     public String teamName(Side side) {

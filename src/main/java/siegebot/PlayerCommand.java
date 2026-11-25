@@ -1,15 +1,20 @@
 package siegebot;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabExecutor;
@@ -39,7 +44,7 @@ public final class PlayerCommand implements TabExecutor {
     private final SiegeBotPlugin plugin;
     private final CommandMenu menu;
     /** プレイヤー → 指示する相手のボット名（選んだ順。無ければ全員）。メニューでシフト+左クリックすると複数選べる。 */
-    private final Map<UUID, java.util.LinkedHashSet<String>> selected = new HashMap<>();
+    private final Map<UUID, LinkedHashSet<String>> selected = new HashMap<>();
     /** プレイヤー → 最後に呼び寄せた時刻（サーバーの tick）。 */
     private final Map<UUID, Long> lastCall = new HashMap<>();
 
@@ -59,7 +64,7 @@ public final class PlayerCommand implements TabExecutor {
             sender.sendMessage("[SiegeBot] このコマンドはゲーム内のプレイヤーだけが使えます。");
             return true;
         }
-        Side side = plugin.bots().sideOf(p);
+        Side side = plugin.teams().sideOf(p);
         if (side == null) {
             tell(p, "攻め・守りのどちらのチームにも入っていません。", NamedTextColor.RED);
             return true;
@@ -69,7 +74,13 @@ public final class PlayerCommand implements TabExecutor {
             return true;
         }
         if (targets(p, side).isEmpty()) {
-            tell(p, "あなたのボットはいません（兵科選択か、コマンドブロックで呼んでください）。", NamedTextColor.RED);
+            Delegations.Entry del = plugin.delegations().entryOf(p.getUniqueId());
+            if (del != null) {
+                tell(p, "あなたのボットの指揮権は " + del.commanderName() + " に譲渡中です（戻すには /sbc units）。",
+                        NamedTextColor.RED);
+            } else {
+                tell(p, "あなたのボットはいません（兵科選択か、コマンドブロックで呼んでください）。", NamedTextColor.RED);
+            }
             return true;
         }
         String sub = args.length == 0 ? "menu" : args[0].toLowerCase(Locale.ROOT);
@@ -108,19 +119,36 @@ public final class PlayerCommand implements TabExecutor {
         return r;
     }
 
-    /** 指示する相手に選べるボット: 自分のボット。 */
+    /** 指示する相手に選べるボット: 今自分が指揮しているボット（自分のボットと、譲られて預かっているボット）。 */
     List<SoldierBot> candidates(Player p, Side side) {
-        return ownBots(p, side);
+        List<SoldierBot> r = new ArrayList<>();
+        for (SoldierBot b : plugin.bots().commandedBy(p.getUniqueId())) {
+            if (b.side() == side) {
+                r.add(b);
+            }
+        }
+        return r;
+    }
+
+    /** 消えたボットを、誰の「指示する相手」の選択からも外す。 */
+    void forgetBot(String botName) {
+        if (botName == null) {
+            return;
+        }
+        selected.values().removeIf(names -> {
+            names.removeIf(n -> n.equalsIgnoreCase(botName));
+            return names.isEmpty();
+        });
     }
 
     /**
      * 選んでいる相手のボット名（選んだ順）。空なら全員。消えた・選べなくなったボットは外す
      * （倒れて消えたボットも外れる。全部外れたら全員に戻る）。
      */
-    java.util.Set<String> selectedNames(Player p, Side side) {
-        java.util.LinkedHashSet<String> names = selected.get(p.getUniqueId());
+    Set<String> selectedNames(Player p, Side side) {
+        LinkedHashSet<String> names = selected.get(p.getUniqueId());
         if (names == null) {
-            return java.util.Set.of();
+            return Set.of();
         }
         List<SoldierBot> can = candidates(p, side);
         names.removeIf(n -> {
@@ -129,14 +157,14 @@ public final class PlayerCommand implements TabExecutor {
         });
         if (names.isEmpty()) {
             selected.remove(p.getUniqueId());
-            return java.util.Set.of();
+            return Set.of();
         }
-        return java.util.Collections.unmodifiableSet(names);
+        return Collections.unmodifiableSet(names);
     }
 
     /** 1 体だけ選んでいればその名前。全員・複数なら null。 */
     String selectedName(Player p, Side side) {
-        java.util.Set<String> names = selectedNames(p, side);
+        Set<String> names = selectedNames(p, side);
         return names.size() == 1 ? names.iterator().next() : null;
     }
 
@@ -145,13 +173,13 @@ public final class PlayerCommand implements TabExecutor {
         if (botName == null) {
             selected.remove(p.getUniqueId());
         } else {
-            selected.put(p.getUniqueId(), new java.util.LinkedHashSet<>(List.of(botName)));
+            selected.put(p.getUniqueId(), new LinkedHashSet<>(List.of(botName)));
         }
     }
 
     /** 指示する相手にそのボットを足す（選んでいれば外す）。メニューのシフト+左クリック。 */
     void toggle(Player p, String botName) {
-        java.util.LinkedHashSet<String> names = selected.computeIfAbsent(p.getUniqueId(), k -> new java.util.LinkedHashSet<>());
+        LinkedHashSet<String> names = selected.computeIfAbsent(p.getUniqueId(), k -> new LinkedHashSet<>());
         if (!names.remove(botName)) {
             names.add(botName);
         }
@@ -162,14 +190,14 @@ public final class PlayerCommand implements TabExecutor {
 
     /** 指示する相手の書き方（全員・名前・N 体）。 */
     String describeSelection(Player p, Side side) {
-        java.util.Set<String> names = selectedNames(p, side);
+        Set<String> names = selectedNames(p, side);
         return names.isEmpty() ? "全員" : names.size() == 1 ? names.iterator().next()
                 : names.size() + " 体（" + String.join("・", names) + "）";
     }
 
     /** 指示が効くボット: 選んだ相手（全員か、選んだ 1 体・複数体）。自分のボットの中から選ぶ。 */
     List<SoldierBot> targets(Player p, Side side) {
-        java.util.Set<String> names = selectedNames(p, side);
+        Set<String> names = selectedNames(p, side);
         if (names.isEmpty()) {
             return candidates(p, side);
         }
@@ -195,32 +223,48 @@ public final class PlayerCommand implements TabExecutor {
      * orders.call-blocked-in-combat が true なら、CombatLog で戦闘中のあいだは呼べない。
      */
     void callToMe(Player p, Side side) {
-        int cooldown = plugin.settings().callCooldownTicks;
-        long now = org.bukkit.Bukkit.getCurrentTick();
+        Settings st = plugin.settings(side);
+        int cooldown = st.callCooldownTicks;
+        long now = Bukkit.getCurrentTick();
         Long last = lastCall.get(p.getUniqueId());
         if (cooldown > 0 && last != null && now - last < cooldown) {
             long left = (cooldown - (now - last) + 19) / 20;
             tell(p, "呼び寄せはあと " + left + " 秒使えません。", NamedTextColor.RED);
             return;
         }
-        if (plugin.settings().callBlockedInCombat) {
+        if (st.callBlockedInCombat) {
             int inCombat = plugin.combat().secondsLeft(p);
             if (inCombat > 0) {
                 tell(p, "戦闘中は呼び寄せられません（あと " + inCombat + " 秒）。", NamedTextColor.RED);
                 return;
             }
         }
-        org.bukkit.Location to = BotManager.groundBelow(p.getLocation());
+        Location to = Formation.groundBelow(p.getLocation());
         List<SoldierBot> moved = new ArrayList<>();
         List<String> down = new ArrayList<>();
+        List<SoldierBot> toMove = new ArrayList<>();
         for (SoldierBot b : targets(p, side)) {
             if (!b.alive()) {
                 down.add(b.name());
-                continue;
+            } else {
+                toMove.add(b);
             }
-            b.npc.getNavigator().cancelNavigation();
-            // 名前の表示を乗せているので、乗客を残したまま移す
-            b.npc.getEntity().teleport(to, io.papermc.paper.entity.TeleportFlag.EntityState.RETAIN_PASSENGERS);
+        }
+        // 呼ぶ人の足元と、移さないボットを避けて並べる（足元が空いていなければ、プレイヤーは避けずにボットどうしだけ避ける）
+        List<Location> occupied = new ArrayList<>(plugin.bots().aliveLocations(toMove));
+        for (SoldierBot b : toMove) {
+            Location spot = to;
+            if (st.separationEnabled) {
+                double minDist = st.separationMinDistance;
+                List<Location> withPlayer = new ArrayList<>(occupied);
+                withPlayer.add(to);
+                spot = plugin.separation().findOpenSpot(to, withPlayer, minDist);
+                if (overlapsAny(spot, withPlayer, minDist)) {
+                    spot = plugin.separation().findOpenSpot(to, occupied, minDist);
+                }
+            }
+            occupied.add(spot);
+            plugin.bots().teleport(b, spot); // 名前の表示を乗せているので、乗客を残したまま移す
             moved.add(b);
         }
         // 1 体でも呼べたなら、倒れているボットのことは言わない（全員倒れているときだけ知らせる）
@@ -234,6 +278,17 @@ public final class PlayerCommand implements TabExecutor {
         }
     }
 
+    /** at が、others のどれかと（縦に重なる範囲で）水平に minDist 未満か。 */
+    private static boolean overlapsAny(Location at, List<Location> others, double minDist) {
+        for (Location o : others) {
+            if (o.getWorld() == at.getWorld() && Math.abs(o.getY() - at.getY()) < Separation.VERTICAL_OVERLAP
+                    && Math.hypot(o.getX() - at.getX(), o.getZ() - at.getZ()) < minDist) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** 戦闘をやめさせ、持ち場（ついてこいなら自分）へ戻らせる。着いたら元の動きに戻る。方針・構えは変えない。 */
     void retreat(Player p, Side side) {
         plugin.bots().retreat(targets(p, side));
@@ -241,9 +296,9 @@ public final class PlayerCommand implements TabExecutor {
 
     /** 視点の先（見ているブロックの、見ている面の手前）を守らせる。構えは今のまま。 */
     void holdLookPoint(Player p, Side side) {
-        Point point = plugin.bots().lookPoint(p);
+        Point point = plugin.formation().lookPoint(p);
         if (point == null) {
-            tell(p, "視点の先にブロックがありません（" + Math.round(plugin.settings().holdMaxDistance)
+            tell(p, "視点の先にブロックがありません（" + Math.round(plugin.settings(side).holdMaxDistance)
                     + " ブロック以内の地面や壁を見てください）。", NamedTextColor.RED);
             return;
         }

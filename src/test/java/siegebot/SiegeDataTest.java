@@ -126,6 +126,77 @@ class SiegeDataTest {
     }
 
     @Test
+    void mapNameRoundTrip() throws Exception {
+        File f = dir.resolve("data.yml").toFile();
+        SiegeData d = new SiegeData(f, logger(new ArrayList<>()));
+        assertEquals(null, d.mapName());
+        d.setMapName("  castle_a ");
+        assertEquals("castle_a", d.mapName());
+        assertTrue(d.save());
+        assertTrue(Files.readString(f.toPath(), StandardCharsets.UTF_8).contains("map: castle_a"));
+        SiegeData back = new SiegeData(f, logger(new ArrayList<>()));
+        back.load();
+        assertEquals("castle_a", back.mapName());
+        back.setMapName("   ");
+        assertEquals(null, back.mapName()); // 空白だけは「既定」
+        back.setMapName(null);
+        assertEquals(null, back.mapName());
+    }
+
+    @Test
+    void noMapKeyIsWrittenWhenMapIsDefault() throws Exception {
+        File f = dir.resolve("data.yml").toFile();
+        SiegeData d = new SiegeData(f, logger(new ArrayList<>()));
+        d.bots().put("A1", Side.ATTACK);
+        assertTrue(d.save());
+        assertFalse(Files.readString(f.toPath(), StandardCharsets.UTF_8).contains("map:"));
+        SiegeData back = new SiegeData(f, logger(new ArrayList<>()));
+        back.load();
+        assertEquals(null, back.mapName());
+
+        // 読み直すと前のマップ名は残らない
+        d.setMapName("old");
+        d.load();
+        assertEquals(null, d.mapName());
+    }
+
+    @Test
+    void mapNameSurvivesSavingSpawnsAndBots() throws Exception {
+        File f = dir.resolve("data.yml").toFile();
+        SiegeData d = new SiegeData(f, logger(new ArrayList<>()));
+        d.setMapName("snow_keep");
+        d.spawns().put(Side.ATTACK, new Point("world", 1, 64, 2));
+        assertTrue(d.save());
+        d.bots().put("B1", Side.DEFEND);
+        d.botTypes().put("B1", UnitType.SPEARMAN);
+        assertTrue(d.save());
+
+        SiegeData back = new SiegeData(f, logger(new ArrayList<>()));
+        back.load();
+        assertEquals("snow_keep", back.mapName());
+        assertEquals(new Point("world", 1, 64, 2), back.spawns().get(Side.ATTACK));
+        back.bots().remove("B1");
+        back.spawns().clear();
+        assertTrue(back.save()); // 読み込んだ後の変更の保存でも消えない
+        SiegeData again = new SiegeData(f, logger(new ArrayList<>()));
+        again.load();
+        assertEquals("snow_keep", again.mapName());
+        assertTrue(again.bots().isEmpty());
+    }
+
+    @Test
+    void saveReturnsFalseWhenTheFileCannotBeWritten() throws Exception {
+        File f = dir.resolve("data.yml").toFile();
+        Files.createDirectory(f.toPath()); // ファイルの場所がフォルダなので書けない
+        List<String> log = new ArrayList<>();
+        SiegeData d = new SiegeData(f, logger(log));
+        d.setMapName("x");
+        assertFalse(d.save());
+        assertEquals(1, log.size());
+        assertTrue(log.get(0).contains("data.yml"));
+    }
+
+    @Test
     void unitTypeParse() {
         assertEquals(UnitType.ARCHER, UnitType.parse("archer"));
         assertEquals(UnitType.ARCHER, UnitType.parse("BOW"));

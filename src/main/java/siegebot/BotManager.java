@@ -9,8 +9,13 @@ import java.util.Set;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
+import java.util.function.ToIntFunction;
+import java.util.HashMap;
+import io.papermc.paper.entity.TeleportFlag;
 import net.citizensnpcs.api.CitizensAPI;
-import net.citizensnpcs.api.ai.EntityTarget;
 import net.citizensnpcs.api.ai.Navigator;
 import net.citizensnpcs.api.ai.NavigatorParameters;
 import net.citizensnpcs.api.ai.PathfinderType;
@@ -20,29 +25,24 @@ import net.citizensnpcs.api.npc.NPCRegistry;
 import net.citizensnpcs.api.trait.trait.Equipment;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextColor;
 import org.bukkit.Bukkit;
-import org.bukkit.FluidCollisionMode;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
-import org.bukkit.block.Block;
-import org.bukkit.block.BlockFace;
-import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
-import org.bukkit.scoreboard.Team;
-import org.bukkit.util.RayTraceResult;
 
 /**
  * 兵士ボットの生成・破棄と、毎回の行動の決定。
  *
  * <p>行動の決め方（{@link #TICK_PERIOD} tick ごと）:
  * <ol>
- *   <li>方針から「持ち場」を引く（追従なら相手の足元、地点を守るならその地点。{@link #anchorFor}）。</li>
+ *   <li>方針から「持ち場」を引く（追従なら相手の足元、地点を守るならその地点。{@link Formation#anchorFor}）。</li>
  *   <li>持ち場の周りにいる敵のうち、見えている最も近い敵を狙う（{@link #pickTarget}）。</li>
  *   <li>敵がいなければ持ち場へ歩く。</li>
  * </ol>
@@ -52,16 +52,6 @@ import org.bukkit.util.RayTraceResult;
 public final class BotManager {
 
     public static final int TICK_PERIOD = 10;
-    /** 経路があるのにこの tick 数のあいだ動かなければ、経路を取り直す。 */
-    static final int STUCK_TICKS = 60;
-    /** 追う道に蜘蛛の巣があるかを調べる間隔（tick）と、見つけた敵を追わないでおく長さ（tick）。 */
-    public static final int CHASE_CHECK_PERIOD = 2;
-    static final int WEB_BLOCK_TICKS = 40;
-    /** 横隊の間隔（ブロック）と、1 列に並べる最大の人数（これより多ければ 2 列）。 */
-    static final double FORMATION_SPACING = 1.6;
-    static final int FORMATION_ROW_MAX = 5;
-    /** 横隊の自分の位置にこの距離まで寄れば着いたとする（ブロック）。 */
-    static final double FORMATION_ARRIVE = 0.6;
     /** 見えていなくても気づく距離。 */
     private static final double SENSE_RADIUS = 5.0;
     /** この距離の敵には、持ち場からの距離（leash）に関係なく応戦する。 */
@@ -74,14 +64,25 @@ public final class BotManager {
     private final Map<String, SoldierBot> bots = new LinkedHashMap<>();
     private long tickCount;
     /** 最後に自動で回復させた時刻（サーバーの tick）。 */
-    private long lastRegenTick;
+    private final Map<Side, Long> lastRegenTick = new java.util.EnumMap<>(Side.class);
+    /** プレイヤーが最後に倒れた時刻（サーバーの tick）。同じ tick の同時死亡で回数を二重に戻さないために使う。 */
+    private final Map<UUID, Long> lastDeathTick = new HashMap<>();
+    /** プレイヤーが倒れた回数（{@link #ownerLife}）。兵を出したときの値と比べて、回数を戻してよい兵かを決める。 */
+    private final Map<UUID, Integer> ownerLives = new HashMap<>();
 
     private final NameTags nameTags;
+    private final NavigationWatch navigationWatch;
 
     public BotManager(SiegeBotPlugin plugin) {
         this.plugin = plugin;
         this.registry = CitizensAPI.createInMemoryNPCRegistry("siegebot");
         this.nameTags = new NameTags(plugin);
+        this.navigationWatch = new NavigationWatch(plugin);
+    }
+
+    /** 詰まりの見張りと復旧の集計。 */
+    NavigationWatch navigationWatch() {
+        return navigationWatch;
     }
 
     // ---- 一覧 ----
@@ -140,8 +141,9 @@ public final class BotManager {
      * @return 作ったボット。同名がいる・出す場所がない場合は null
      */
     public SoldierBot spawn(String name, Side side, Location fallback, UUID owner, String ownerName, UnitType type) {
+        Settings s = plugin.settings(side);
         if (type == null) {
-            type = plugin.settings().defaultUnit;
+            type = s.defaultUnit;
         }
         if (get(name) != null) {
             return null;
@@ -153,36 +155,67 @@ public final class BotManager {
         if (at == null) {
             return null;
         }
+        // 先にいるボットと重ならない所に出す（方針の持ち場は元の at のまま）
+        Location spawnAt = s.separationEnabled
+                ? plugin.separation().findOpenSpot(at, aliveLocations(null), s.separationMinDistance)
+                : at;
         NPC npc = registry.createNPC(EntityType.PLAYER, name);
         npc.setProtected(false);
         npc.data().set(NPC.Metadata.DISABLE_DEFAULT_STUCK_ACTION, true);
         npc.data().set(NPC.Metadata.KEEP_CHUNK_LOADED, true);
-        Equipment eq = npc.getOrAddTrait(Equipment.class);
-        for (Map.Entry<String, ItemStack> e : plugin.settings().unit(type).equipment.entrySet()) {
-            Equipment.EquipmentSlot slot = slotOf(e.getKey());
-            if (slot == null || (e.getValue().getType() == Material.SHIELD && !plugin.settings().shieldEnabled)) {
-                continue; // shield.enabled が false なら盾は持たせない
-            }
-            eq.set(slot, equipmentItem(e.getValue(), plugin.settings().unit(type)));
-        }
-        applyNavigatorSettings(npc, type);
+        applyEquipment(npc, side, type);
+        applyNavigatorSettings(npc, side, type);
         SoldierBot bot = new SoldierBot(name, side, npc, owner, type);
+        bot.ownerLife = ownerLife(owner);
         bot.order = owner != null && ownerName != null
                 ? Order.follow(ownerName, Order.Stance.GUARD)
                 : Order.hold(Point.of(at), Order.Stance.GUARD);
         bots.put(name.toLowerCase(Locale.ROOT), bot);
-        if (plugin.settings().nameTagTeamOnly) {
-            npc.data().set(NPC.Metadata.NAMEPLATE_VISIBLE, false); // Citizens の名前を一瞬も出さない
-        }
-        npc.spawn(at, SpawnReason.PLUGIN);
+        npc.data().set(NPC.Metadata.NAMEPLATE_VISIBLE, false); // Citizens の名前を一瞬も出さない（NameTags の表示を使う）
+        npc.spawn(spawnAt, SpawnReason.PLUGIN);
         applyMaxHealth(bot, true);
         return bot;
+    }
+
+    /**
+     * 兵種の装備を入れる（陣営の設定の units.&lt;兵種&gt;.equipment）。先に全部位を空にするので、設定にない部位は何も持たない。
+     * shield.enabled が false なら盾は持たせない。
+     */
+    private void applyEquipment(NPC npc, Side side, UnitType type) {
+        Settings s = plugin.settings(side);
+        Equipment eq = npc.getOrAddTrait(Equipment.class);
+        for (Equipment.EquipmentSlot slot : new Equipment.EquipmentSlot[] {
+                Equipment.EquipmentSlot.HAND, Equipment.EquipmentSlot.OFF_HAND, Equipment.EquipmentSlot.HELMET,
+                Equipment.EquipmentSlot.CHESTPLATE, Equipment.EquipmentSlot.LEGGINGS, Equipment.EquipmentSlot.BOOTS}) {
+            eq.set(slot, null);
+        }
+        for (Map.Entry<String, ItemStack> e : s.unit(type).equipment.entrySet()) {
+            Equipment.EquipmentSlot slot = slotOf(e.getKey());
+            if (slot == null || (e.getValue().getType() == Material.SHIELD && !s.shieldEnabled)) {
+                continue; // shield.enabled が false なら盾は持たせない
+            }
+            eq.set(slot, equipmentItem(e.getValue(), s.unit(type)));
+        }
+    }
+
+    /** 出ているボット（exclude に入っているものを除く）の今の位置。exclude は null 可。 */
+    List<Location> aliveLocations(Collection<SoldierBot> exclude) {
+        List<Location> r = new ArrayList<>();
+        for (SoldierBot b : bots.values()) {
+            if (b.alive() && (exclude == null || !exclude.contains(b))) {
+                r.add(b.npc.getEntity().getLocation());
+            }
+        }
+        return r;
     }
 
     public boolean remove(String name) {
         SoldierBot b = name == null ? null : bots.remove(name.toLowerCase(Locale.ROOT));
         if (b == null) {
             return false;
+        }
+        if (plugin.playerCommand() != null) {
+            plugin.playerCommand().forgetBot(b.name);
         }
         nameTags.remove(b);
         b.npc.destroy();
@@ -222,24 +255,367 @@ public final class BotManager {
 
     /**
      * 専用のボットを、オンラインのプレイヤーとチームに合わせる。チームを抜けた・移った人と、退出した人のボットを消す。
+     * 指揮権の譲渡も合わせる（持ち主がチームを離れた・譲渡先がいなくなった／別のチームになったら解除して兵と回数を戻す）。
      * 新しく出すことはしない（出すのは {@link #revive} だけ。コマンドブロックの /sb revive から呼ぶ）。
+     * 兵科選択のアイテム（紙）は、回数・譲渡が変わったとき（{@link UnitPicks#syncPlayers}）と参加・リスポーンのときだけ配る
+     * （ここで毎回配ると、箱にしまった紙が配り直されて増える）。
      */
     public void syncPersonalBots() {
-        List<UUID> online = new ArrayList<>();
+        Map<UUID, Side> onlineSides = new HashMap<>();
         for (Player p : Bukkit.getOnlinePlayers()) {
-            online.add(p.getUniqueId());
-            Side side = sideOf(p);
-            for (SoldierBot mine : ownedBy(p.getUniqueId())) {
-                if (mine.side != side) {
-                    remove(mine.name);
+            onlineSides.put(p.getUniqueId(), plugin.teams().sideOf(p));
+        }
+        for (Map.Entry<UUID, Delegations.Entry> e : plugin.delegations().snapshot().entrySet()) {
+            UUID ownerId = e.getKey();
+            Delegations.Entry del = e.getValue();
+            Side ownerSide = onlineSides.get(ownerId);
+            if (ownerSide == null) {
+                // 持ち主がオフラインか、どのチームにもいない
+                String ownerName = Bukkit.getOfflinePlayer(ownerId).getName();
+                clearDelegationOfOwner(ownerId, ownerName != null ? ownerName : "持ち主", "チームを離れた");
+            } else if (onlineSides.get(del.commander()) != ownerSide) {
+                // 譲渡先がオフラインか、別のチーム
+                plugin.delegations().clear(ownerId);
+                Player op = Bukkit.getPlayer(ownerId);
+                if (op != null) {
+                    retarget(ownedBy(ownerId), del.commanderName(), op.getName());
+                    tellPlayer(op, del.commanderName() + " がチームを離れたため、あなたの兵と残り回数の指揮権が戻りました。");
                 }
+                plugin.picks().syncPlayers(ownerId, del.commander());
             }
         }
         for (SoldierBot b : new ArrayList<>(bots.values())) {
-            if (b.owner != null && !online.contains(b.owner)) {
+            if (b.owner != null && onlineSides.get(b.owner) != b.side) {
                 remove(b.name);
             }
         }
+    }
+
+    /** 持ち主 ownerId の専用のボットのうち、別のチームになったもの・倒れて出ていないものを消す。 */
+    private void cleanupInvalidOwned(UUID ownerId, Side side) {
+        for (SoldierBot old : ownedBy(ownerId)) {
+            if (old.side != side || !old.npc.isSpawned()) {
+                remove(old.name); // チームを移った後の古いボットと、倒れた（消えそこねた）ボット
+            }
+        }
+    }
+
+    // ---- 指揮権の譲渡 ----
+
+    /** id のプレイヤーがオンラインで side のチームにいるか。 */
+    public boolean isOnlineSameSide(UUID id, Side side) {
+        Player p = Bukkit.getPlayer(id);
+        return p != null && p.isOnline() && side != null && plugin.teams().sideOf(p) == side;
+    }
+
+    /** owner の兵を今指揮する人（譲渡先がオンラインで同じチームならその人、そうでなければ owner 自身）。 */
+    public UUID effectiveCommander(UUID owner, Side side) {
+        if (owner == null) {
+            return null;
+        }
+        return plugin.delegations().commanderOf(owner, id -> isOnlineSameSide(id, side));
+    }
+
+    /** そのボットを今指揮する人。持ち主のいないボットは null。 */
+    public UUID commanderOf(SoldierBot bot) {
+        return bot.owner == null ? null : effectiveCommander(bot.owner, bot.side);
+    }
+
+    /** commander が今指揮しているボット（出した順）。 */
+    public List<SoldierBot> commandedBy(UUID commander) {
+        List<SoldierBot> r = new ArrayList<>();
+        if (commander == null) {
+            return r;
+        }
+        for (SoldierBot b : bots.values()) {
+            if (commander.equals(commanderOf(b))) {
+                r.add(b);
+            }
+        }
+        return r;
+    }
+
+    /**
+     * oldLeaderName についてこさせていたボットだけ、newLeaderName についてこさせる（構えはそのまま）。
+     * 持ち場を守っているボットや、別の人を追っているボットには触らない。
+     */
+    void retarget(Collection<SoldierBot> targetBots, String oldLeaderName, String newLeaderName) {
+        if (oldLeaderName == null || newLeaderName == null) {
+            return;
+        }
+        for (SoldierBot b : targetBots) {
+            if (b.order != null && b.order.mode() == Order.Mode.FOLLOW && b.order.player() != null
+                    && b.order.player().equalsIgnoreCase(oldLeaderName)) {
+                setOrder(b, Order.follow(newLeaderName, b.order.stance()));
+            }
+        }
+    }
+
+    /**
+     * owner の指揮権（兵と残り回数）を同じチームの target に譲る。すでに誰かに譲っていれば付け替える。
+     *
+     * @return 譲れたら true（相手がオンラインでない・倒れている・同じチームでない・ボット・自分自身なら false）
+     */
+    public boolean delegateCommand(Player owner, Player target) {
+        if (owner == null || target == null || !owner.isOnline() || !target.isOnline() || target.isDead()
+                || owner.getUniqueId().equals(target.getUniqueId()) || byEntity(target) != null) {
+            return false;
+        }
+        Side side = plugin.teams().sideOf(owner);
+        if (side == null || side != plugin.teams().sideOf(target)) {
+            return false;
+        }
+        UUID ownerId = owner.getUniqueId();
+        UUID targetId = target.getUniqueId();
+        Delegations.Entry oldEntry = plugin.delegations().entryOf(ownerId);
+        String oldLeaderName = oldEntry != null ? oldEntry.commanderName() : owner.getName();
+        plugin.delegations().set(ownerId, targetId, target.getName());
+        List<SoldierBot> myBots = ownedBy(ownerId);
+        retarget(myBots, oldLeaderName, target.getName());
+        UUID oldCmdId = oldEntry != null ? oldEntry.commander() : null;
+        plugin.picks().syncPlayers(ownerId, targetId, oldCmdId);
+        int left = plugin.picks().ownPicks(ownerId);
+        tellPlayer(owner, target.getName() + " に指揮権を譲渡しました（兵 " + myBots.size() + " 体・残り " + left
+                + " 回。あなたが倒れても渡した兵は残りますが、残り回数は 0 になります）。");
+        tellPlayer(target, owner.getName() + " から指揮権を譲り受けました（兵 " + myBots.size() + " 体・残り " + left + " 回）。");
+        if (oldCmdId != null && !oldCmdId.equals(targetId)) {
+            Player oldCmd = Bukkit.getPlayer(oldCmdId);
+            if (oldCmd != null && oldCmd.isOnline()) {
+                tellPlayer(oldCmd, owner.getName() + " が指揮権の譲渡先を " + target.getName() + " に変更しました。");
+            }
+        }
+        return true;
+    }
+
+    /** owner が譲っていた指揮権を自分に戻す。譲っていなければ false。 */
+    public boolean reclaimCommand(Player owner) {
+        Delegations.Entry prev = plugin.delegations().clear(owner.getUniqueId());
+        if (prev == null) {
+            return false;
+        }
+        retarget(ownedBy(owner.getUniqueId()), prev.commanderName(), owner.getName());
+        plugin.picks().syncPlayers(owner.getUniqueId(), prev.commander());
+        tellPlayer(owner, "指揮権を自分に戻しました。");
+        Player cmd = Bukkit.getPlayer(prev.commander());
+        if (cmd != null && cmd.isOnline()) {
+            tellPlayer(cmd, owner.getName() + " が指揮権を自分に戻しました。");
+        }
+        return true;
+    }
+
+    /**
+     * commanderId に譲られていた指揮権をすべて持ち主に戻す（指揮者が倒れた・退出した・チームが変わったとき）。
+     * 持ち主がオンラインで同じチームにいれば、その兵を持ち主についてこさせ直して知らせる。
+     *
+     * @param reason 「倒れた」「退出した」など（「…ため」に続く）
+     */
+    public void returnDelegatedFromCommander(UUID commanderId, String commanderName, String reason) {
+        Map<UUID, Delegations.Entry> cleared = plugin.delegations().clearByCommander(commanderId);
+        for (UUID ownerId : cleared.keySet()) {
+            Player op = Bukkit.getPlayer(ownerId);
+            Side ownerSide = op != null && op.isOnline() ? plugin.teams().sideOf(op) : null;
+            if (op != null && op.isOnline() && !op.isDead() && ownerSide != null) {
+                List<SoldierBot> aliveOwned = new ArrayList<>();
+                for (SoldierBot b : ownedBy(ownerId)) {
+                    if (b.side == ownerSide && b.alive()) {
+                        aliveOwned.add(b);
+                    }
+                }
+                retarget(aliveOwned, commanderName, op.getName());
+                tellPlayer(op, commanderName + " が" + reason + "ため、あなたの兵（" + aliveOwned.size() + " 体）と残り "
+                        + plugin.picks().ownPicks(ownerId) + " 回の指揮権が戻りました。");
+            }
+            plugin.picks().syncPlayers(ownerId, commanderId);
+        }
+    }
+
+    /**
+     * プレイヤーが倒れた時刻と回数を記録する（{@link #onCommanderDeath} の同時死亡の判定と、
+     * 回数を戻してよい兵の判定 {@link #refundable} に使う）。
+     */
+    public void recordPlayerDeath(UUID player) {
+        if (player != null) {
+            lastDeathTick.put(player, (long) Bukkit.getCurrentTick());
+            ownerLives.merge(player, 1, Integer::sum);
+        }
+    }
+
+    /** そのプレイヤーが（サーバーを起動してから）倒れた回数。持ち主のいないボットは 0。退出しても数え直さない。 */
+    int ownerLife(UUID player) {
+        return player == null ? 0 : ownerLives.getOrDefault(player, 0);
+    }
+
+    /**
+     * 指揮官が倒れて道連れになった兵の分を、持ち主の回数に戻してよいか: 兵を出してから持ち主が一度も倒れていないときだけ。
+     * 持ち主の死を越えて生き残った兵（委任先で生き残った兵）を回数に変えられないようにする。
+     */
+    static boolean refundable(int ownerLifeAtSpawn, int ownerLifeNow) {
+        return ownerLifeAtSpawn == ownerLifeNow;
+    }
+
+    /**
+     * 持ち主が倒れたときの、その人の兵の扱い。指揮権を同じチームの生きている人に譲っていれば、兵は倒さず、
+     * 譲渡もそのまま（預かっている人が指揮を続ける。兵の持ち主は変えないので、上限 max-per-player の枠もそのまま使う）。
+     * 譲っていない・譲渡先が無効なら、譲渡を解除し、方針を戻して兵を全部倒す。回数を 0 にするのは呼び出し元。
+     */
+    public void onOwnerDeath(Player dead) {
+        UUID id = dead.getUniqueId();
+        Side side = plugin.teams().sideOf(dead);
+        Delegations.Entry del = plugin.delegations().entryOf(id);
+        Player cmd = del == null ? null : Bukkit.getPlayer(del.commander());
+        if (del != null && side != null && cmd != null && !cmd.isDead() && isOnlineSameSide(del.commander(), side)) {
+            List<SoldierBot> keptBots = new ArrayList<>();
+            for (SoldierBot b : ownedBy(id)) {
+                if (b.side == side && b.alive()) {
+                    keptBots.add(b);
+                }
+            }
+            int kept = keptBots.size();
+            retarget(keptBots, dead.getName(), cmd.getName()); // 倒れた持ち主についていっていた兵は、指揮者についていく
+            tellPlayer(cmd, dead.getName() + " が倒れましたが、預かっている兵 " + kept
+                    + " 体はそのまま指揮できます（" + dead.getName() + " の残り回数は 0 になりました）。");
+            return;
+        }
+        clearDelegationOfOwner(id, dead.getName(), "倒れた");
+        resetOrders(dead);
+        killOwnedBots(id);
+    }
+
+    /** 倒れた時刻の記録を捨てる（退出したとき）。 */
+    public void forgetPlayerDeath(UUID player) {
+        if (player != null) {
+            lastDeathTick.remove(player);
+        }
+    }
+
+    /**
+     * 指揮官が倒れたときの後始末。預かっていた指揮権を元の持ち主に戻し、その持ち主の出ている兵を倒して、
+     * killOwnedAlive が返した数（回数を戻してよい体数）だけ持ち主の回数に足す（持ち主が同じ tick に倒れていた・退出した・
+     * 陣営が変わったときは足さず通知もしない）。
+     * 加算と通知は 1 tick 後に行う。順序: 委任を外す → 預かり分の紙を更新 → 兵を倒す → （次の tick）加算・通知。
+     *
+     * @param killOwnedAlive 持ち主の出ている兵を倒し、そのうち回数を戻してよい体数（{@link #refundable}）を返す
+     * @param ownerEligibleNextTick 1 tick 後に持ち主へ加算・通知してよいか
+     * @param deferNextTick 処理を 1 tick 後に回す
+     * @param notifyOwner 持ち主に知らせる（持ち主, 倒れた体数）
+     */
+    static void handleCommanderDeath(
+            Delegations delegations,
+            UnitPicks picks,
+            UUID commanderId,
+            ToIntFunction<UUID> killOwnedAlive,
+            Predicate<UUID> ownerEligibleNextTick,
+            Consumer<Runnable> deferNextTick,
+            BiConsumer<UUID, Integer> notifyOwner) {
+        Map<UUID, Delegations.Entry> cleared = delegations.clearByCommander(commanderId);
+        if (cleared.isEmpty()) {
+            return;
+        }
+        Map<UUID, Integer> killedByOwner = new LinkedHashMap<>();
+        for (UUID ownerId : cleared.keySet()) {
+            picks.syncPlayers(ownerId, commanderId); // 1 tick 待たず即座に預かり分の紙を更新
+            int killed = killOwnedAlive.applyAsInt(ownerId);
+            killedByOwner.put(ownerId, killed);
+        }
+        deferNextTick.accept(() -> {
+            for (Map.Entry<UUID, Integer> e : killedByOwner.entrySet()) {
+                UUID ownerId = e.getKey();
+                if (!ownerEligibleNextTick.test(ownerId)) {
+                    continue; // 同時死亡（B→A 順）・退出・陣営変更なら加算も通知もしない
+                }
+                int killed = e.getValue();
+                if (killed > 0) {
+                    picks.addPicks(ownerId, killed);
+                }
+                notifyOwner.accept(ownerId, killed);
+            }
+        });
+    }
+
+    /**
+     * 指揮官（commanderId）が倒れたとき、預かっていた兵を倒して、倒れた数だけ元の持ち主の回数に戻す
+     * （持ち主が一度倒れた後も生き残っていた兵の分は戻さない。{@link #refundable}）。
+     * 退出のとき（兵を生かしたまま返す）は {@link #returnDelegatedFromCommander} を使う。
+     */
+    public void onCommanderDeath(UUID commanderId, String commanderName) {
+        long deathTick = Bukkit.getCurrentTick();
+        // 兵が 0 体の持ち主にも 1 tick 後に通知が届くよう、兵の数に関係なく全委任元の陣営を先に記録する
+        Map<UUID, Side> ownerSidesAtDeath = new HashMap<>();
+        for (UUID ownerId : plugin.delegations().ownersOf(commanderId)) {
+            Player op = Bukkit.getPlayer(ownerId);
+            Side side = op != null && op.isOnline() ? plugin.teams().sideOf(op) : null;
+            if (side != null) {
+                ownerSidesAtDeath.put(ownerId, side);
+            }
+        }
+        Map<UUID, Integer> killedByOwner = new HashMap<>(); // 倒れた体数（回数を戻さない兵も含む。知らせる文に使う）
+        handleCommanderDeath(
+                plugin.delegations(),
+                plugin.picks(),
+                commanderId,
+                ownerId -> {
+                    Side ownerSide = ownerSidesAtDeath.get(ownerId);
+                    if (ownerSide == null) {
+                        return 0;
+                    }
+                    int killed = 0;
+                    int refund = 0;
+                    int lifeNow = ownerLife(ownerId);
+                    for (SoldierBot b : ownedBy(ownerId)) {
+                        if (b.side == ownerSide && killBot(b)) {
+                            killed++;
+                            if (refundable(b.ownerLife, lifeNow)) {
+                                refund++; // 持ち主の死を越えて生き残った兵は戻さない
+                            }
+                        }
+                    }
+                    killedByOwner.put(ownerId, killed);
+                    return refund;
+                },
+                ownerId -> {
+                    Side expectedSide = ownerSidesAtDeath.get(ownerId);
+                    Player op = Bukkit.getPlayer(ownerId);
+                    return expectedSide != null && op != null && op.isOnline() && !op.isDead()
+                            && plugin.teams().sideOf(op) == expectedSide
+                            && lastDeathTick.getOrDefault(ownerId, Long.MIN_VALUE) < deathTick;
+                },
+                task -> Bukkit.getScheduler().runTask(plugin, task),
+                (ownerId, refunded) -> {
+                    Player op = Bukkit.getPlayer(ownerId);
+                    if (op == null || !op.isOnline()) {
+                        return;
+                    }
+                    int total = plugin.picks().ownPicks(ownerId);
+                    int killed = killedByOwner.getOrDefault(ownerId, 0);
+                    if (killed > 0 && refunded == killed) {
+                        tellPlayer(op, commanderName + " が倒れたため、預けていた兵 " + killed + " 体が倒れ、その分の "
+                                + killed + " 回を戻しました（兵科選択: 残り " + total + " 回）。");
+                    } else if (killed > 0) {
+                        tellPlayer(op, commanderName + " が倒れたため、預けていた兵 " + killed + " 体が倒れました。"
+                                + "あなたが倒れる前に呼んだ兵の分は戻らないので、戻したのは " + refunded + " 回です（兵科選択: 残り "
+                                + total + " 回）。");
+                    } else {
+                        tellPlayer(op, commanderName + " が倒れたため、指揮権が戻りました（兵科選択: 残り " + total + " 回）。");
+                    }
+                });
+    }
+
+    /** 持ち主 ownerId が譲っていた指揮権を解除する（持ち主が倒れた・退出した）。預かっていた指揮者に知らせる。 */
+    public void clearDelegationOfOwner(UUID ownerId, String ownerName, String reason) {
+        Delegations.Entry prev = plugin.delegations().clear(ownerId);
+        if (prev == null) {
+            return;
+        }
+        plugin.picks().syncPlayers(ownerId, prev.commander());
+        Player prevCmd = Bukkit.getPlayer(prev.commander());
+        if (prevCmd != null && prevCmd.isOnline()) {
+            tellPlayer(prevCmd, ownerName + " が" + reason + "ため、預かっていた指揮権が解除されました。");
+        }
+    }
+
+    private static void tellPlayer(Player p, String text) {
+        p.sendMessage(Component.text("[SiegeBot] ", NamedTextColor.GOLD)
+                .append(Component.text(text, NamedTextColor.WHITE)));
     }
 
     /**
@@ -275,15 +651,11 @@ public final class BotManager {
      * 手を付けない。全兵種の合計は max-per-player を超えない。type が null なら兵種を問わず数え、新しく出すのは units.default の兵種。
      */
     public ReviveReport revive(Player p, Integer count, UnitType type) {
-        Side side = sideOf(p);
+        Side side = plugin.teams().sideOf(p);
         if (side == null) {
             return ReviveReport.of(ReviveReport.Status.NO_TEAM);
         }
-        for (SoldierBot old : ownedBy(p.getUniqueId())) {
-            if (old.side != side || !old.npc.isSpawned()) {
-                remove(old.name); // チームを移った後の古いボットと、倒れた（消えそこねた）ボット
-            }
-        }
+        cleanupInvalidOwned(p.getUniqueId(), side);
         List<SoldierBot> all = ownedBy(p.getUniqueId());
         List<SoldierBot> mine = new ArrayList<>();
         for (SoldierBot b : all) {
@@ -291,8 +663,10 @@ public final class BotManager {
                 mine.add(b);
             }
         }
-        int max = plugin.settings().maxBotsPerPlayer;
-        int want = Math.max(1, Math.min(max, count == null ? Math.max(1, mine.size()) : count));
+        Settings st = plugin.settings(side);
+        int max = st.maxBotsPerPlayer;
+        // max が下がっても、すでにいるボットは消さない（超えた分の指定は capped に数える）
+        int want = Math.max(1, count == null ? Math.max(1, mine.size()) : count);
         // 新しく出せるのは、全兵種の合計が上限に届くまで
         int room = Math.max(0, max - all.size());
         int toSpawn = Math.max(0, want - mine.size());
@@ -302,10 +676,14 @@ public final class BotManager {
         int spawned = 0;
         int alive = Math.min(want, mine.size());
         SoldierBot voice = null;
-        UnitType newType = type == null ? plugin.settings().defaultUnit : type;
+        UnitType newType = type == null ? st.defaultUnit : type;
+        // 初期の追従先と、出す場所が決まらないときの場所は、今指揮している人（譲渡中ならその人）。上限・名前は持ち主の p のまま
+        UUID cmdId = effectiveCommander(p.getUniqueId(), side);
+        Player cmd = cmdId == null ? null : Bukkit.getPlayer(cmdId);
+        Player follow = cmd != null ? cmd : p;
         for (int i = 0; i < toSpawn; i++) {
-            SoldierBot b = spawn(personalName(p.getName(), newType), side, p.getLocation(), p.getUniqueId(), p.getName(),
-                    newType);
+            SoldierBot b = spawn(personalName(p.getName(), side, newType), side, follow.getLocation(), p.getUniqueId(),
+                    follow.getName(), newType);
             if (b == null) {
                 break;
             }
@@ -323,26 +701,6 @@ public final class BotManager {
 
     // ---- 兵科選択（呼べる回数を使って、兵種を選んで 1 体ずつ呼ぶ） ----
 
-    /** プレイヤー → 兵科選択で呼べる残りの回数。コマンドブロックの /sb picks で決める。サーバーを止めると消える。 */
-    private final Map<UUID, Integer> picks = new java.util.HashMap<>();
-
-    public int picks(UUID player) {
-        return picks.getOrDefault(player, 0);
-    }
-
-    /** 残りの回数を n にする（0 未満は 0）。オンラインなら兵科選択のアイテムを回数に合わせる（0 なら消す）。 */
-    public void setPicks(UUID player, int n) {
-        if (n <= 0) {
-            picks.remove(player);
-        } else {
-            picks.put(player, n);
-        }
-        Player p = Bukkit.getPlayer(player);
-        if (p != null && plugin.unitItem() != null) {
-            plugin.unitItem().sync(p);
-        }
-    }
-
     /** {@link #summon} の結果。 */
     public enum SummonResult {
         /** 新しく出した */
@@ -358,33 +716,42 @@ public final class BotManager {
     }
 
     /**
-     * 兵科選択: 呼べる回数を 1 使って、その兵種のボットを 1 体新しく出す（上限 max-per-player まで）。
-     * 呼べなかったときは回数を使わない。
+     * 兵科選択: 呼べる回数を 1 使って、その兵種のボットを 1 体新しく出す。自分の分を先に、次に譲られて預かっている分を使う
+     * （使った持ち主の上限 max-per-player の枠に出る）。呼べなかったときは回数を使わない。
      */
     public SummonResult summon(Player p, UnitType type) {
-        Side side = sideOf(p);
+        Side side = plugin.teams().sideOf(p);
         if (side == null) {
             return SummonResult.NO_TEAM;
         }
-        if (picks(p.getUniqueId()) <= 0) {
+        int max = plugin.settings(side).maxBotsPerPlayer;
+        UnitPicks.PickChoice choice = plugin.picks().peekOriginFor(p, side, originId -> {
+            cleanupInvalidOwned(originId, side);
+            return ownedBy(originId).size() < max;
+        });
+        if (choice.status() == UnitPicks.PickChoice.Status.NO_PICKS) {
             return SummonResult.NO_PICKS;
         }
-        for (SoldierBot old : ownedBy(p.getUniqueId())) {
-            if (old.side != side || !old.npc.isSpawned()) {
-                remove(old.name); // チームを移った後の古いボットと、倒れた（消えそこねた）ボット
-            }
-        }
-        List<SoldierBot> mine = ownedBy(p.getUniqueId());
-        if (mine.size() >= plugin.settings().maxBotsPerPlayer) {
+        if (choice.status() == UnitPicks.PickChoice.Status.FULL) {
             return SummonResult.FULL;
         }
-        SoldierBot b = spawn(personalName(p.getName(), type), side, p.getLocation(), p.getUniqueId(), p.getName(), type);
+        UUID originId = choice.originOwner();
+        Player originPlayer = Bukkit.getPlayer(originId);
+        String originName = originPlayer != null ? originPlayer.getName() : p.getName();
+        SoldierBot b = spawn(personalName(originName, side, type), side, p.getLocation(), originId, p.getName(), type);
         if (b == null) {
             return SummonResult.NO_PLACE;
         }
-        setPicks(p.getUniqueId(), picks(p.getUniqueId()) - 1);
+        plugin.picks().consumeOne(originId); // 出せた後にだけ使う
         say(b, type.label() + "、参戦した");
         return SummonResult.SPAWNED;
+    }
+
+    /** 兵科選択の画面用: p が今 1 体呼ぶとしたらどうなるか（何も変えない。倒れた兵は数えない）。 */
+    public UnitPicks.PickChoice checkSummonAvailability(Player p, Side side) {
+        int max = plugin.settings(side).maxBotsPerPlayer;
+        return plugin.picks().peekOriginFor(p, side, originId -> ownedBy(originId).stream()
+                .filter(b -> b.side == side && b.alive()).count() < max);
     }
 
     /**
@@ -410,33 +777,81 @@ public final class BotManager {
     /** 持ち主が倒れたら、その専用のボットを全部倒す（倒れたボットはすぐ消える）。 */
     public void killOwnedBots(UUID owner) {
         for (SoldierBot b : ownedBy(owner)) {
-            if (b.npc.isSpawned() && b.npc.getEntity() instanceof LivingEntity le) {
-                le.setHealth(0.0);
-            }
+            killBot(b);
         }
     }
 
+    /** 出ているボットを 1 体倒す。実際に倒れたら true（イベントのキャンセルなどで生き残れば false）。 */
+    private boolean killBot(SoldierBot b) {
+        if (!b.alive() || !(b.npc.getEntity() instanceof LivingEntity le) || le.isDead() || le.getHealth() <= 0.0) {
+            return false;
+        }
+        le.setHealth(0.0);
+        boolean died = !b.alive() || le.isDead() || le.getHealth() <= 0.0;
+        if (died && plugin.playerCommand() != null) {
+            plugin.playerCommand().forgetBot(b.name);
+        }
+        return died;
+    }
+
+    /** 専用のボットの名前（「名前の兵」、2 体目からは「名前2の兵」…）。16 文字に収まるよう名前を縮める。 */
+    private String personalName(String player, Side side, UnitType type) {
+        return uniqueName(player, plugin.settings(side).unit(type).nameSuffix, n -> get(n) != null);
+    }
+
     /**
-     * 専用のボットの名前（「名前の兵」、2 体目からは「名前2の兵」…）。16 文字に収まるよう名前を縮める
-     * （max-per-player は 9 までなので番号は 1 桁）。
+     * プレイヤー名 + 接尾辞の名前を、16 文字以内で exists に当たらないように決める。重複するときは番号（2 から）を
+     * プレイヤー名の後ろ（接尾辞の前）に入れ、足りなければプレイヤー名を縮める。番号だけで 16 文字を超える極端な場合は
+     * 接尾辞を縮める。
      */
-    private String personalName(String player, UnitType type) {
-        String suffix = plugin.settings().unit(type).nameSuffix;
-        int room = Math.max(1, 16 - suffix.length()); // 名前は 16 文字まで
-        String base = player.length() > room ? player.substring(0, room) : player;
-        String name = base + suffix;
-        for (int i = 2; get(name) != null; i++) {
-            name = base.substring(0, Math.min(base.length(), room - 1)) + i + suffix;
+    static String uniqueName(String player, String suffix, Predicate<String> exists) {
+        String s = suffix == null ? "" : suffix;
+        if (s.length() >= 16) {
+            s = s.substring(0, 15);
+        }
+        int room = 16 - s.length();
+        String pName = player == null ? "" : player;
+        String base = pName.length() > room ? pName.substring(0, room) : pName;
+        String name = base + s;
+        for (int i = 2; exists.test(name); i++) {
+            String num = String.valueOf(i);
+            if (num.length() <= room) {
+                int keep = room - num.length();
+                name = base.substring(0, Math.min(base.length(), keep)) + num + s;
+            } else {
+                int sKeep = Math.max(0, 16 - num.length());
+                name = num + s.substring(0, Math.min(s.length(), sKeep));
+            }
         }
         return name;
     }
 
-    /** config.yml を読み直した後に、移動・攻撃の設定を全ボットに入れ直す。 */
-    public void reapplySettings() {
+    /**
+     * 設定を読み直した（または別のマップに切り替えた）後に、移動・攻撃・体力の設定を全ボットに入れ直す。
+     * refreshEquipment が true なら装備も入れ直す（盾の耐久は満タンに戻る）。/sb reload では false（装備は触らない）。
+     */
+    public void reapplySettings(boolean refreshEquipment) {
         for (SoldierBot b : bots.values()) {
-            applyNavigatorSettings(b.npc, b.type);
+            if (refreshEquipment && b.npc.isSpawned()) {
+                applyEquipment(b.npc, b.side, b.type);
+            }
+            applyNavigatorSettings(b.npc, b.side, b.type);
             applyMaxHealth(b, false);
         }
+    }
+
+    /**
+     * ボットを to へ移す。移す前の経路は捨てる（残ると古い経路のまま止まる）。
+     * 名前の表示を乗せているので、乗客を残したまま移す。倒れている（出ていない）ボットには呼ばない。
+     */
+    public void teleport(SoldierBot bot, Location to) {
+        bot.holdingSlot = false;
+        bot.fineBypassUntilTick = 0;
+        bot.backingOff = false;
+        bot.backoffStartTick = 0;
+        NavigationWatch.clearTracking(bot);
+        bot.npc.getNavigator().cancelNavigation();
+        bot.npc.getEntity().teleport(to, TeleportFlag.EntityState.RETAIN_PASSENGERS);
     }
 
     /** 兵種の最大の体力（units.&lt;兵種&gt;.max-health）を入れる。full なら満タンにする（出したとき・参戦したとき）。 */
@@ -444,7 +859,7 @@ public final class BotManager {
         if (!(bot.npc.getEntity() instanceof LivingEntity le)) {
             return;
         }
-        double max = plugin.settings().unit(bot.type).maxHealth;
+        double max = plugin.settings(bot.side).unit(bot.type).maxHealth;
         org.bukkit.attribute.AttributeInstance a = le.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH);
         if (a == null) {
             return;
@@ -459,8 +874,8 @@ public final class BotManager {
         }
     }
 
-    private void applyNavigatorSettings(NPC npc, UnitType type) {
-        Settings s = plugin.settings();
+    private void applyNavigatorSettings(NPC npc, Side side, UnitType type) {
+        Settings s = plugin.settings(side);
         Settings.Unit unit = s.unit(type);
         NavigatorParameters p = npc.getNavigator().getDefaultParameters();
         p.range(s.pathRange);
@@ -490,14 +905,11 @@ public final class BotManager {
             return false;
         }
         p.swingMainHand();
-        boolean hit = Aim.meleeHits(bot, p, target, plugin.settings().unit(bot.type).attackRange + 1.0);
+        boolean hit = Aim.meleeHits(bot, p, target, plugin.settings(bot.side).unit(bot.type).attackRange + 1.0);
         if (hit) {
             net.citizensnpcs.util.NMS.attack(attacker, target);
         }
-        if (GameListener.logKnockback) {
-            plugin.getLogger().info(String.format(Locale.ROOT, "[kb] t=%d %s %s -> %s %s",
-                    Bukkit.getCurrentTick(), hit ? "HIT" : "MISS", bot.name, target.getName(), Aim.describe(bot, p)));
-        }
+        plugin.combatDebug().logMelee(bot, target, hit, p);
         return true;
     }
 
@@ -568,6 +980,11 @@ public final class BotManager {
     public void setOrder(SoldierBot bot, Order order) {
         bot.order = order;
         bot.retreatUntilTick = 0;
+        bot.holdingSlot = false;
+        bot.fineBypassUntilTick = 0;
+        bot.backingOff = false;
+        bot.backoffStartTick = 0;
+        NavigationWatch.clearTracking(bot);
     }
 
     /**
@@ -583,10 +1000,13 @@ public final class BotManager {
             if (!b.npc.isSpawned()) {
                 continue;
             }
-            b.retreatUntilTick = now + plugin.settings().retreatTimeoutTicks;
+            b.retreatUntilTick = now + plugin.settings(b.side).retreatTimeoutTicks;
             b.target = null;
+            boolean wasBackingOff = b.backingOff;
+            b.backingOff = false;
+            b.backoffStartTick = 0;
             Navigator nav = b.npc.getNavigator();
-            if (nav.getEntityTarget() != null) {
+            if (nav.getEntityTarget() != null || wasBackingOff) {
                 nav.cancelNavigation();
             }
             voice = voice == null ? b : voice;
@@ -616,86 +1036,6 @@ public final class BotManager {
                 : "了解。" + String.join(" / ", parts));
     }
 
-    // ---- 陣営の判定 ----
-
-    /** プレイヤーのスコアボードのチームから陣営を出す。どちらでもなければ null。 */
-    public Side sideOf(Player p) {
-        return sideOfTeam(Bukkit.getScoreboardManager().getMainScoreboard().getEntryTeam(p.getName()));
-    }
-
-    /** エンティティ（プレイヤーかボット）の陣営。どちらでもなければ null。 */
-    public Side sideOf(Entity e) {
-        SoldierBot b = byEntity(e);
-        if (b != null) {
-            return b.side;
-        }
-        if (e instanceof Player p) {
-            return sideOf(p);
-        }
-        // モブはスコアボードのチームに UUID で入る（/team join <チーム> <セレクタ>）
-        Team t = Bukkit.getScoreboardManager().getMainScoreboard().getEntryTeam(e.getUniqueId().toString());
-        return sideOfTeam(t);
-    }
-
-    /**
-     * スコアボードのチームが、どちらの陣営のチームか（config.yml の teams と、大文字・小文字を区別せずに比べる）。
-     * 陣営の判定はすべてここを通す。
-     */
-    private Side sideOfTeam(Team t) {
-        if (t == null) {
-            return null;
-        }
-        for (Side s : Side.values()) {
-            if (t.getName().equalsIgnoreCase(plugin.settings().teamName(s))) {
-                return s;
-            }
-        }
-        return null;
-    }
-
-    /** その陣営のスコアボードのチーム（名前は大文字・小文字を区別しない）。なければ null。 */
-    private Team teamOf(Side side) {
-        for (Team t : Bukkit.getScoreboardManager().getMainScoreboard().getTeams()) {
-            if (sideOfTeam(t) == side) {
-                return t;
-            }
-        }
-        return null;
-    }
-
-    /** その陣営のチームに入っているモブ（プレイヤーとボットと防具立てを除く、生きている読み込み済みのもの）。 */
-    private List<LivingEntity> mobs(Side side) {
-        List<LivingEntity> r = new ArrayList<>();
-        Team t = teamOf(side);
-        if (t == null) {
-            return r;
-        }
-        for (String entry : t.getEntries()) {
-            UUID id;
-            try {
-                id = UUID.fromString(entry);
-            } catch (IllegalArgumentException notUuid) {
-                continue; // プレイヤー名の登録
-            }
-            Entity e = Bukkit.getEntity(id);
-            if (e instanceof LivingEntity le && !(e instanceof Player) && !(e instanceof ArmorStand)
-                    && byEntity(e) == null && le.isValid() && !le.isDead()) {
-                r.add(le);
-            }
-        }
-        return r;
-    }
-
-    public List<Player> humans(Side side) {
-        List<Player> r = new ArrayList<>();
-        for (Player p : Bukkit.getOnlinePlayers()) {
-            if (sideOf(p) == side) {
-                r.add(p);
-            }
-        }
-        return r;
-    }
-
     /**
      * ボットの発言を送る。持ち主にだけ（オフラインなら誰にも送らない）。
      * 持ち主のいないボットは（通常はいないが）同じ陣営のプレイヤーに送る。
@@ -710,18 +1050,26 @@ public final class BotManager {
     }
 
     /**
-     * ボットに関する知らせを送る。持ち主がいれば持ち主にだけ（いなければ誰にも送らない）、
+     * ボットに関する知らせを送る。持ち主がいれば持ち主と今の指揮者にだけ（いなければ誰にも送らない）、
      * 持ち主のいないボット（通常はいない）なら同じ陣営のプレイヤー全員に送る。
      */
     public void sendToAudience(SoldierBot bot, Component msg) {
         if (bot.owner != null) {
-            Player owner = Bukkit.getPlayer(bot.owner);
-            if (owner != null) {
-                owner.sendMessage(msg);
+            Set<UUID> targets = new LinkedHashSet<>();
+            targets.add(bot.owner);
+            UUID cmd = commanderOf(bot);
+            if (cmd != null) {
+                targets.add(cmd);
+            }
+            for (UUID id : targets) {
+                Player t = Bukkit.getPlayer(id);
+                if (t != null && t.isOnline()) {
+                    t.sendMessage(msg);
+                }
             }
             return;
         }
-        for (Player p : humans(bot.side)) {
+        for (Player p : plugin.teams().humans(bot.side)) {
             p.sendMessage(msg);
         }
     }
@@ -734,163 +1082,11 @@ public final class BotManager {
         return p == null ? null : p.toLocation();
     }
 
-    /**
-     * 方針から、今いるべき「持ち場」を出す。決められなければ null（その場で近くの敵と戦う）。
-     * 追従の相手がいない・敵の陣営に移ったときも null。
-     */
-    public Location anchorFor(SoldierBot bot) {
-        Order o = bot.order;
-        if (o == null) {
-            return null;
-        }
-        Location base;
-        Player leader = null;
-        if (o.mode() == Order.Mode.FOLLOW) {
-            // 敵の陣営でなければ追う（チームに入っていないプレイヤーも追える）
-            Player p = Bukkit.getPlayerExact(o.player());
-            if (p == null || p.isDead() || sideOf(p) == bot.side.opposite()) {
-                bot.inFormation = false;
-                return null;
-            }
-            leader = p;
-            base = groundBelow(p.getLocation());
-        } else {
-            Location l = o.point().toLocation();
-            if (l == null) {
-                bot.inFormation = false;
-                return null;
-            }
-            base = groundBelow(l);
-        }
-        return formationSlot(bot, base, leader);
-    }
-
-    /**
-     * 横隊の中の自分の位置。同じ持ち場（同じ陣営で、同じ人に追従・同じ地点を守る）の参戦中のボットを出した順に並べ、
-     * 5 人までは 1 列、それより多ければ 2 列（前の列が多め）の横隊にする。間隔は {@link #FORMATION_SPACING}。
-     * <ul>
-     *   <li>追従: 相手の向き（45 度ごとに丸める）の follow-distance 後ろに横隊（2 列目はさらに後ろ）</li>
-     *   <li>守れ: 地点を 1 列目の真ん中にし、指示した人が見ていた向き（なければ敵のリスポーン地点の方）を向く横隊</li>
-     * </ul>
-     * 1 体だけなら今までどおり base（相手の足元・守る地点）。横隊の位置に立てなければ base。
-     */
-    private Location formationSlot(SoldierBot bot, Location base, Player leader) {
-        List<SoldierBot> group = new ArrayList<>();
-        for (SoldierBot b : bots.values()) {
-            if (b.side == bot.side && b.npc.isSpawned() && sameStation(b.order, bot.order)) {
-                group.add(b);
-            }
-        }
-        int n = group.size();
-        int idx = group.indexOf(bot);
-        if (n <= 1 || idx < 0) {
-            bot.inFormation = false;
-            return base;
-        }
-        bot.inFormation = true;
-        int perRow = n <= FORMATION_ROW_MAX ? n : (n + 1) / 2;
-        int row = idx / perRow;
-        int col = idx % perRow;
-        int inRow = Math.min(perRow, n - row * perRow);
-        double lateral = (col - (inRow - 1) / 2.0) * FORMATION_SPACING;
-
-        double yaw;
-        double back;
-        if (leader != null) {
-            yaw = Math.round(leader.getLocation().getYaw() / 45.0) * 45.0; // 少し向きを変えただけで並び直さない
-            back = Math.max(1.5, plugin.settings().followDistance) + row * FORMATION_SPACING;
-        } else {
-            Float fixed = null;
-            for (SoldierBot b : group) {
-                if (b.holdYaw != null) {
-                    fixed = b.holdYaw; // 同じ地点の横隊は最初のボットの向きにそろえる
-                    break;
-                }
-            }
-            yaw = fixed != null ? fixed : yawToward(base, spawnLocation(bot.side.opposite()));
-            back = row * FORMATION_SPACING;
-        }
-        double rad = Math.toRadians(yaw);
-        double fx = -Math.sin(rad); // Minecraft の向き: yaw 0 が +Z、90 が -X
-        double fz = Math.cos(rad);
-        double x = base.getX() - fx * back - fz * lateral;
-        double z = base.getZ() - fz * back + fx * lateral;
-        Location slot = standNear(base.getWorld(), x, base.getY(), z);
-        return slot != null ? slot : base;
-    }
-
-    /** 同じ持ち場か（同じ人に追従・同じ地点を守る）。 */
-    private static boolean sameStation(Order a, Order b) {
-        if (a == null || b == null || a.mode() != b.mode()) {
-            return false;
-        }
-        if (a.mode() == Order.Mode.FOLLOW) {
-            return a.player().equalsIgnoreCase(b.player());
-        }
-        return a.point().equals(b.point());
-    }
-
-    /** from から to を向く yaw（度）。to がなければ 0（+Z）。 */
-    private static double yawToward(Location from, Location to) {
-        if (to == null || to.getWorld() != from.getWorld()) {
-            return 0;
-        }
-        double dx = to.getX() - from.getX();
-        double dz = to.getZ() - from.getZ();
-        if (dx * dx + dz * dz < 1e-6) {
-            return 0;
-        }
-        return Math.toDegrees(Math.atan2(-dx, dz));
-    }
-
-    /** (x, z) の、高さ y の近く（上 2・下 3 まで）で立てる所（足と頭が通れて足元が固い）。なければ null。 */
-    private static Location standNear(org.bukkit.World w, double x, double y, double z) {
-        int bx = (int) Math.floor(x);
-        int bz = (int) Math.floor(z);
-        int by = (int) Math.floor(y);
-        for (int dy : new int[] {0, 1, -1, 2, -2, -3}) {
-            Block feet = w.getBlockAt(bx, by + dy, bz);
-            if (feet.isPassable() && !feet.isLiquid() && feet.getRelative(BlockFace.UP).isPassable()
-                    && feet.getRelative(BlockFace.DOWN).getType().isSolid()) {
-                return new Location(w, x, by + dy, z);
-            }
-        }
-        return null;
-    }
-
     /** 「守れ」の横隊が向く向きを決める（指示した人が見ていた向き）。 */
     public void setHoldFacing(java.util.Collection<SoldierBot> targets, float yaw) {
         for (SoldierBot b : targets) {
             b.holdYaw = yaw;
         }
-    }
-
-    /**
-     * プレイヤーが見ているブロックの、見ている面の側の 1 マス（床を見ていれば床の上、壁を見ていれば壁の手前）を、
-     * 足場の上に直したもの。空や hold-max-distance より遠い所を見ていれば null。
-     */
-    public Point lookPoint(Player p) {
-        RayTraceResult r = p.rayTraceBlocks(plugin.settings().holdMaxDistance, FluidCollisionMode.NEVER);
-        if (r == null || r.getHitBlock() == null) {
-            return null;
-        }
-        Block hit = r.getHitBlock();
-        BlockFace face = r.getHitBlockFace();
-        Block stand = hit.getRelative(face == null ? BlockFace.UP : face);
-        return Point.of(groundBelow(stand.getLocation().add(0.5, 0, 0.5)));
-    }
-
-    /** 空中（ジャンプ中・飛行中）の位置なら、真下の足場の上に直す。経路探索は空中の地点に向かえないため。 */
-    static Location groundBelow(Location loc) {
-        Block b = loc.getBlock();
-        int minY = loc.getWorld().getMinHeight();
-        for (int i = 0; i < 32 && b.getY() > minY; i++) {
-            if (b.getRelative(BlockFace.DOWN).getType().isSolid()) {
-                return b.getLocation().add(0.5, 0, 0.5);
-            }
-            b = b.getRelative(BlockFace.DOWN);
-        }
-        return loc;
     }
 
     // ---- 毎回の行動 ----
@@ -901,367 +1097,168 @@ public final class BotManager {
             syncPersonalBots();
         }
         long now = Bukkit.getCurrentTick();
-        Settings s = plugin.settings();
-        // 自動の回復: regen-interval-seconds ごとに regen-amount ずつ（最大体力を超えない）
-        boolean regen = s.regenAmount > 0 && now - lastRegenTick >= s.regenIntervalTicks;
-        if (regen) {
-            lastRegenTick = now;
+        // 自動の回復: regen-interval-seconds ごとに regen-amount ずつ（最大体力を超えない）。陣営ごとの設定で別々に数える
+        Map<Side, Boolean> regenOf = new java.util.EnumMap<>(Side.class);
+        for (Side side : Side.values()) {
+            Settings rs = plugin.settings(side);
+            boolean due = rs.regenAmount > 0 && now - lastRegenTick.getOrDefault(side, 0L) >= rs.regenIntervalTicks;
+            if (due) {
+                lastRegenTick.put(side, now);
+            }
+            regenOf.put(side, due);
         }
+        TextColor attackColor = plugin.teams().colorOf(Side.ATTACK);
+        TextColor defendColor = plugin.teams().colorOf(Side.DEFEND);
+        Formation.Layout layout = plugin.formation().computeLayout(); // 全ボットの持ち場を 1 回だけ出す
         for (SoldierBot bot : bots.values()) {
+            // 倒れているボットも含めて、期限切れの除外を掃除する（unreachableStrikes は指数の段を保つので残す）
+            bot.unreachableTargets.values().removeIf(until -> until <= now);
+            bot.lineBlockedTargets.values().removeIf(until -> until <= now);
             try {
-                if (regen && bot.npc.isSpawned() && bot.npc.getEntity() instanceof LivingEntity le
+                Settings s = plugin.settings(bot.side);
+                if (regenOf.get(bot.side) && bot.npc.isSpawned() && bot.npc.getEntity() instanceof LivingEntity le
                         && !le.isDead() && le.getHealth() < le.getMaxHealth()
                         && now - bot.lastDamagedTick >= s.regenDelayTicks) {
                     le.heal(s.regenAmount, org.bukkit.event.entity.EntityRegainHealthEvent.RegainReason.REGEN);
                 }
-                tickBot(bot, now);
-                nameTags.update(bot);
+                tickBot(bot, layout, now);
+                nameTags.update(bot, bot.side == Side.ATTACK ? attackColor : defendColor);
             } catch (RuntimeException e) {
                 plugin.getLogger().warning("ボット " + bot.name + " の処理で例外: " + e);
             }
         }
     }
 
-    private void tickBot(SoldierBot bot, long now) {
+    private void tickBot(SoldierBot bot, Formation.Layout layout, long now) {
         NPC npc = bot.npc;
         if (!npc.isSpawned()) {
             bot.target = null;
             bot.retreatUntilTick = 0; // 倒れたら退却も終わる
+            bot.holdingSlot = false;
+            resetRuntimeState(bot);
             return; // 倒れたボットは自動では復活しない（/sb revive で出し直す）
         }
         if (!(npc.getEntity() instanceof LivingEntity self)) {
             return;
         }
-        Settings s = plugin.settings();
-        Location anchor = anchorFor(bot);
-        if (anchor != null && anchor.getWorld() != self.getWorld()) {
-            anchor = null;
-        }
+        Settings s = plugin.settings(bot.side);
+        Formation.Anchor slot = layout.anchorFor(bot);
+        Location anchor = slot != null && slot.location().getWorld() == self.getWorld() ? slot.location() : null;
+        boolean inFormation = anchor != null && slot.inFormation();
         Navigator nav = npc.getNavigator();
+        navigationWatch.check(bot, nav, self, anchor, inFormation, s, now);
 
         // 退却中: 持ち場が決められない・着いたら終わり（期限が過ぎれば retreating が false になる）。続くなら戦わずに戻る
         if (bot.retreating(now)) {
+            bot.backingOff = false;
+            bot.backoffStartTick = 0;
+            bot.holdingSlot = false;
             if (anchor == null) {
                 bot.retreatUntilTick = 0;
-            } else if (arrived(bot, self, anchor, s)) {
+            } else if (arrived(bot, self, anchor, inFormation, s)) {
                 bot.retreatUntilTick = 0; // 着いても知らせない
             } else {
                 bot.target = null;
                 if (nav.getEntityTarget() != null) {
                     nav.cancelNavigation();
                 }
-                walkTo(bot, nav, self, anchor, now);
+                walkTo(bot, nav, self, anchor, inFormation, now);
                 return;
             }
         }
 
         LivingEntity target = pickTarget(bot, self, anchor, now);
         bot.target = target;
-        if (target != null && bot.type == UnitType.ARCHER) {
-            if (archerMove(bot, nav, self, target, anchor, s, now)) {
+        if (target != null) {
+            bot.holdingSlot = false;
+            if (plugin.combatOf(bot.type).tickCombatMove(bot, nav, self, target, anchor, s, now)) {
                 return;
             }
-        } else if (target != null && bot.type == UnitType.SPEARMAN) {
-            spearMove(bot, nav, self, target, s);
-            return;
-        } else if (target != null) {
-            EntityTarget cur = nav.getEntityTarget();
-            if (cur == null || cur.getTarget() != target || !nav.isNavigating()) {
-                nav.setTarget(target, true);
-            }
-            return;
         }
+        // 戦闘の動きで抜けなかった = 後退は終わっている（非戦闘の歩きを BACKOFF と誤分類しない）
+        bot.backingOff = false;
+        bot.backoffStartTick = 0;
         if (nav.getEntityTarget() != null) {
             nav.cancelNavigation();
         }
         if (anchor == null) {
+            bot.holdingSlot = false;
             return;
         }
-        if (arrived(bot, self, anchor, s)) {
-            if (nav.isNavigating() && bot.order.mode() == Order.Mode.FOLLOW) {
-                nav.cancelNavigation();
-            }
-            return;
-        }
-        walkTo(bot, nav, self, anchor, now);
-    }
-
-    /**
-     * 弓兵の動き（撃つのは {@link Archers} が 2 tick ごとに行う）。
-     * <ul>
-     *   <li>見えていて units.archer.range 以内: 止まって撃つ。min-distance より近ければ、keep-distance まで下がる。</li>
-     *   <li>見えない・遠い: 近づく（殴らない）。ただし敵が持ち場から leash（構えで決まる）の外なら近づかない。</li>
-     * </ul>
-     *
-     * @return 動きを決めたら true。false なら持ち場へ戻る動き（敵がいないときと同じ）に任せる
-     */
-    private boolean archerMove(SoldierBot bot, Navigator nav, LivingEntity self, LivingEntity target, Location anchor,
-                               Settings s, long now) {
-        Location here = self.getLocation();
-        Location t = target.getLocation();
-        double d = here.distance(t);
-        boolean los = self.hasLineOfSight(target);
-        if (los && d <= s.archerRange) {
-            // 近すぎる敵から下がるのは積極的のときだけ。持ち場優先では逃げずに、その場で撃ち続ける
-            boolean guard = bot.order != null && bot.order.stance() == Order.Stance.GUARD;
-            if (d < s.archerMinDistance && !guard) {
-                Location away = retreatSpot(here, t, s.archerKeepDistance - d);
-                if (away != null) {
-                    Location dest = nav.isNavigating() ? nav.getTargetAsLocation() : null;
-                    if (!bot.backingOff || dest == null || dest.distanceSquared(away) > 4.0) {
-                        nav.setTarget(away);
-                        bot.backingOff = true;
-                    }
-                    return true;
-                }
-                // 下がる場所がなければ、その場で撃つ
-            }
-            // 下がっている途中なら keep-distance まで下がり切る。それ以外の歩き（近づく・持ち場へ）はやめて撃つ
-            boolean keepBacking = bot.backingOff && nav.isNavigating() && d < s.archerKeepDistance;
-            if (!keepBacking) {
-                bot.backingOff = false;
+        double distSq = self.getLocation().distanceSquared(anchor);
+        if (inFormation) {
+            // 横隊: 自分の位置に着いたら止まる。着いたあとは少し離れるまで動き直さない（縁で行ったり来たりしない）
+            double enterRadius = Formation.FORMATION_ARRIVE;
+            double exitRadius = Math.max(Formation.FORMATION_ARRIVE + 0.4, s.separationEnabled ? s.separationMinDistance : 0.0);
+            bot.holdingSlot = updateHoldingSlot(bot.holdingSlot, distSq, enterRadius, exitRadius);
+            if (bot.holdingSlot) {
                 if (nav.isNavigating()) {
                     nav.cancelNavigation();
                 }
+                return;
             }
-            return true;
-        }
-        bot.backingOff = false;
-        double leash = bot.order != null && bot.order.stance() == Order.Stance.PUSH ? s.pushLeash : s.guardLeash;
-        if (anchor != null && t.distanceSquared(anchor) > leash * leash) {
-            return false; // 持ち場から離れすぎるので追わない（見えて届けば撃つ）
-        }
-        EntityTarget cur = nav.getEntityTarget();
-        if (cur == null || cur.getTarget() != target || cur.isAggressive() || !nav.isNavigating()) {
-            nav.setTarget(target, false); // 近づくだけで殴らない
-        }
-        return true;
-    }
-
-    /**
-     * 槍兵の動き（突くのと、近づいて届いたら止まるのは {@link Spearmen} が 2 tick ごとに行う）。
-     * <ul>
-     *   <li>届かない・見えない: 近づく（Citizens の追跡。殴らない）。</li>
-     *   <li>届く: 止まる。届く距離より back-off-inside 以上内側まで寄られたら、届くぎりぎりまで下がる。</li>
-     * </ul>
-     * 届くかは、目から相手の当たり判定の箱までの距離（{@link #reachDistance}）で比べる（プレイヤーのリーチと同じ測り方）。
-     */
-    private void spearMove(SoldierBot bot, Navigator nav, LivingEntity self, LivingEntity target, Settings s) {
-        if (bot.shieldUp) {
-            return; // 盾で矢を防いでいる間は動かない（Shields が止めて矢の方を向かせている）
-        }
-        if (webBlocked(bot, target, Bukkit.getCurrentTick())) {
-            // 追う道に蜘蛛の巣がある敵: 近づかない（届けば Spearmen がその場で突く。pickTarget は届くときだけこの敵を選ぶ）
-            if (nav.getEntityTarget() != null) {
-                nav.cancelNavigation();
-            }
-            bot.backingOff = false;
-            return;
-        }
-        double reach = s.unit(UnitType.SPEARMAN).attackRange;
-        double d = reachDistance(self, target);
-        if (d <= reach && self.hasLineOfSight(target)) {
-            if (d < reach - s.spearBackOffInside) {
-                Location away = retreatSpot(self.getLocation(), target.getLocation(), reach - s.spearStopInside - d);
-                if (away != null) {
-                    Location dest = nav.isNavigating() ? nav.getTargetAsLocation() : null;
-                    if (!bot.backingOff || dest == null || dest.distanceSquared(away) > 4.0) {
-                        nav.setTarget(away);
-                        bot.backingOff = true;
+        } else {
+            bot.holdingSlot = false;
+            if (bot.order.mode() == Order.Mode.FOLLOW) {
+                if (distSq <= s.followDistance * s.followDistance) {
+                    if (nav.isNavigating()) {
+                        nav.cancelNavigation();
                     }
                     return;
                 }
-                // 下がる場所がなければ、その場で突く
-            }
-            boolean keepBacking = bot.backingOff && nav.isNavigating() && d < reach - s.spearStopInside;
-            if (!keepBacking) {
-                bot.backingOff = false;
-                if (nav.isNavigating()) {
-                    nav.cancelNavigation();
+            } else {
+                // 単独で地点を守る: 着いたとみなす距離は、ボットの間隔より狭くしない。
+                // 歩いている途中は止めない（Citizens に持ち場の中心まで歩き切らせる）
+                double holdArrive = Math.max(s.arriveRadius, s.separationEnabled ? s.separationMinDistance : 0.0);
+                if (distSq <= holdArrive * holdArrive) {
+                    return;
                 }
             }
-            return;
         }
+        walkTo(bot, nav, self, anchor, inFormation, now);
+    }
+
+    /** 倒れた・出ていないボットの、詰まりの見張り・後退・盾の停止まわりの状態を捨てる（復活後に持ち越さない）。 */
+    private static void resetRuntimeState(SoldierBot bot) {
+        NavigationWatch.clearTracking(bot);
         bot.backingOff = false;
-        EntityTarget cur = nav.getEntityTarget();
-        if (cur == null || cur.getTarget() != target || cur.isAggressive() || !nav.isNavigating()) {
-            nav.setTarget(target, false); // 近づくだけ。突くのは Spearmen
-        }
-    }
-
-    /** 追う道に蜘蛛の巣があったので、今は追わない敵か。 */
-    static boolean webBlocked(SoldierBot bot, LivingEntity e, long now) {
-        Long until = bot.webBlocked.get(e.getUniqueId());
-        return until != null && now < until;
-    }
-
-    /** 追う道に巣があったので今は追わず、届く距離にもいない敵か（狙いに選ばない）。 */
-    private boolean chaseBlocked(SoldierBot bot, LivingEntity self, LivingEntity e, long now) {
-        return webBlocked(bot, e, now) && reachDistance(self, e) > plugin.settings().unit(bot.type).attackRange;
+        bot.backoffStartTick = 0;
+        bot.backoffCooldownUntilTick = 0;
+        bot.fineBypassUntilTick = 0;
+        bot.unreachableTargets.clear();
+        bot.unreachableStrikes.clear();
+        bot.lineBlockedTargets.clear();
+        bot.allyBlockedSinceTick = -1;
+        bot.shieldStopping = false;
+        bot.aimStopStartTick = -1;
+        bot.shieldAimStopCooldownUntilTick = 0;
     }
 
     /**
-     * 槍兵が敵を追っている道（Citizens が引いた経路。近い相手で経路がなければ相手までの直線）に蜘蛛の巣があれば、
-     * 追うのをやめて、その敵を {@link #WEB_BLOCK_TICKS} の間は追わない。{@link #CHASE_CHECK_PERIOD} tick ごとに呼ぶ。
+     * 横隊の自分の位置に着いている状態か。着いていない間は enterRadius 以内に入ったとき、着いている間は
+     * exitRadius 以内にいる間だけ true（exitRadius を大きくして、押し出されても歩き直さない）。
      */
-    public void checkChasePaths() {
-        Settings s = plugin.settings();
-        long now = Bukkit.getCurrentTick();
-        for (SoldierBot bot : bots.values()) {
-            bot.webBlocked.values().removeIf(until -> until <= now);
-            if (!s.spearAvoidCobweb || bot.type != UnitType.SPEARMAN || !bot.npc.isSpawned()
-                    || !(bot.npc.getEntity() instanceof LivingEntity self)) {
-                continue;
-            }
-            Navigator nav = bot.npc.getNavigator();
-            EntityTarget et = nav.getEntityTarget();
-            if (et == null || !nav.isNavigating() || !(et.getTarget() instanceof LivingEntity target)) {
-                continue;
-            }
-            if (pathHasWeb(self, target, nav)) {
-                bot.webBlocked.put(target.getUniqueId(), now + WEB_BLOCK_TICKS);
-                nav.cancelNavigation();
-            }
-        }
+    static boolean updateHoldingSlot(boolean currentlyHolding, double distSq, double enterRadius, double exitRadius) {
+        double r = currentlyHolding ? exitRadius : enterRadius;
+        return distSq <= r * r;
     }
 
-    /** Citizens が引いた今の経路の節点（足と頭）や斜めにかすめる所、経路がなければ相手までの直線に、蜘蛛の巣があるか。 */
-    static boolean pathHasWeb(LivingEntity self, LivingEntity target, Navigator nav) {
-        net.citizensnpcs.api.ai.PathStrategy ps = nav.getPathStrategy();
-        Iterable<org.bukkit.util.Vector> path = ps == null ? null : ps.getPath();
-        if (path == null || !path.iterator().hasNext()) {
-            return webOnSegment(self.getLocation(), target.getLocation());
-        }
-        org.bukkit.World w = self.getWorld();
-        org.bukkit.util.Vector prev = null;
-        for (org.bukkit.util.Vector v : path) {
-            int x = v.getBlockX();
-            int y = v.getBlockY();
-            int z = v.getBlockZ();
-            if (isWeb(w, x, y, z) || isWeb(w, x, y + 1, z)) {
-                return true;
-            }
-            if (prev != null && prev.getBlockX() != x && prev.getBlockZ() != z) {
-                int py = Math.max(y, prev.getBlockY());
-                if (isWeb(w, prev.getBlockX(), py, z) || isWeb(w, prev.getBlockX(), py + 1, z)
-                        || isWeb(w, x, py, prev.getBlockZ()) || isWeb(w, x, py + 1, prev.getBlockZ())) {
-                    return true;
-                }
-            }
-            prev = v;
-        }
-        return false;
-    }
-
-    /**
-     * a から b へまっすぐ歩いたとき、体（幅 0.6・高さ 1.8）が巣に触れるか。0.25 ブロックごとに調べる。
-     * a で既に触れている巣は数えない（巣から抜け出す向きは追ってよい）。
-     */
-    static boolean webOnSegment(Location a, Location b) {
-        org.bukkit.World w = a.getWorld();
-        Set<Long> atStart = new java.util.HashSet<>();
-        double len = a.distance(b);
-        int n = Math.max(1, (int) Math.ceil(len / 0.25));
-        for (int i = 0; i <= n; i++) {
-            double f = (double) i / n;
-            double x = a.getX() + (b.getX() - a.getX()) * f;
-            double y = a.getY() + (b.getY() - a.getY()) * f;
-            double z = a.getZ() + (b.getZ() - a.getZ()) * f;
-            for (double ox : new double[] {-0.3, 0.3}) {
-                for (double oz : new double[] {-0.3, 0.3}) {
-                    for (double oy : new double[] {0.0, 1.0, 1.79}) {
-                        int bx = (int) Math.floor(x + ox);
-                        int by = (int) Math.floor(y + oy);
-                        int bz = (int) Math.floor(z + oz);
-                        if (w.getBlockAt(bx, by, bz).getType() != Material.COBWEB) {
-                            continue;
-                        }
-                        long k = ((long) bx << 38) ^ ((long) (bz & 0x3FFFFFF) << 12) ^ (by & 0xFFF);
-                        if (i == 0) {
-                            atStart.add(k);
-                        } else if (!atStart.contains(k)) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    private static boolean isWeb(org.bukkit.World w, int x, int y, int z) {
-        return w.getBlockAt(x, y, z).getType() == Material.COBWEB;
-    }
-
-    /** self の目から target の当たり判定の箱までの距離（プレイヤーのリーチの測り方）。 */
-    static double reachDistance(LivingEntity self, Entity target) {
-        Location eye = self.getEyeLocation();
-        org.bukkit.util.BoundingBox b = target.getBoundingBox();
-        double x = Math.max(b.getMinX(), Math.min(eye.getX(), b.getMaxX()));
-        double y = Math.max(b.getMinY(), Math.min(eye.getY(), b.getMaxY()));
-        double z = Math.max(b.getMinZ(), Math.min(eye.getZ(), b.getMaxZ()));
-        return Math.sqrt((x - eye.getX()) * (x - eye.getX()) + (y - eye.getY()) * (y - eye.getY())
-                + (z - eye.getZ()) * (z - eye.getZ()));
-    }
-
-    /**
-     * 相手から離れる向きに distance ブロックほど先の、立てる場所。真後ろ・斜め後ろ・横の順に、
-     * 段差 ±1 まで探す。見つからなければ null。
-     */
-    private static Location retreatSpot(Location here, Location from, double distance) {
-        double ax = here.getX() - from.getX();
-        double az = here.getZ() - from.getZ();
-        double len = Math.hypot(ax, az);
-        if (len < 1e-6) {
-            ax = 1;
-            az = 0;
-            len = 1;
-        }
-        ax /= len;
-        az /= len;
-        double dist = Math.max(2.0, distance);
-        for (double deg : new double[] {0, 45, -45, 90, -90}) {
-            double r = Math.toRadians(deg);
-            double x = ax * Math.cos(r) - az * Math.sin(r);
-            double z = ax * Math.sin(r) + az * Math.cos(r);
-            Block base = here.getWorld().getBlockAt((int) Math.floor(here.getX() + x * dist), here.getBlockY(),
-                    (int) Math.floor(here.getZ() + z * dist));
-            for (int dy : new int[] {0, 1, -1}) {
-                Block feet = base.getRelative(0, dy, 0);
-                if (feet.isPassable() && !feet.isLiquid() && feet.getRelative(BlockFace.UP).isPassable()
-                        && feet.getRelative(BlockFace.DOWN).getType().isSolid()) {
-                    return feet.getLocation().add(0.5, 0, 0.5);
-                }
-            }
-        }
-        return null;
-    }
-
-    /** 持ち場に着いたか（追従なら follow-distance 以内、地点を守るなら arrive-radius 以内）。 */
-    private static boolean arrived(SoldierBot bot, LivingEntity self, Location anchor, Settings s) {
+    /** 退却で持ち場に着いたか（追従なら follow-distance 以内、地点を守るなら arrive-radius 以内。横隊なら自分の位置に寄る）。 */
+    private static boolean arrived(SoldierBot bot, LivingEntity self, Location anchor, boolean inFormation, Settings s) {
         // 横隊なら自分の位置にきちんと寄る（重ならないように）
-        double arrive = bot.inFormation ? FORMATION_ARRIVE
+        double arrive = inFormation ? Formation.FORMATION_ARRIVE
                 : bot.order.mode() == Order.Mode.FOLLOW ? s.followDistance : s.arriveRadius;
         return self.getLocation().distanceSquared(anchor) <= arrive * arrive;
     }
 
-    /** 持ち場へ歩かせる。動けなくなっていれば経路を取り直し、目的地が変わったときだけ経路を引き直す。 */
-    private void walkTo(SoldierBot bot, Navigator nav, LivingEntity self, Location anchor, long now) {
-        // 経路があるのに STUCK_TICKS の間 1 ブロックも動いていなければ、経路を取り直す（古い経路のまま止まるのを防ぐ）
+    /** 持ち場へ歩かせる。目的地が変わったときだけ経路を引き直す（詰まりの復旧は {@link NavigationWatch}）。 */
+    private void walkTo(SoldierBot bot, Navigator nav, LivingEntity self, Location anchor, boolean inFormation,
+                        long now) {
         Location here = self.getLocation();
-        if (!nav.isNavigating() || bot.stuckPos == null || bot.stuckPos.getWorld() != here.getWorld()
-                || bot.stuckPos.distanceSquared(here) > 1.0) {
-            bot.stuckPos = here;
-            bot.stuckTick = now;
-        } else if (now - bot.stuckTick >= STUCK_TICKS) {
-            nav.cancelNavigation();
-            bot.stuckPos = here;
-            bot.stuckTick = now;
-        }
         Location dest = nav.isNavigating() ? nav.getTargetAsLocation() : null;
         // 横隊の位置のすぐ近く（3 ブロック以内）なら、経路探索を使わずにまっすぐ寄る
         // （経路探索は目的地の 1 ブロックほど手前で「着いた」として止まるので、隣と重なる）
-        boolean fine = bot.inFormation && here.getWorld() == anchor.getWorld() && here.distanceSquared(anchor) < 9.0;
+        boolean fine = inFormation && now >= bot.fineBypassUntilTick && here.getWorld() == anchor.getWorld() && here.distanceSquared(anchor) < 9.0;
         double tolerance = fine ? 0.25 : 4.0;
         if (dest == null || dest.getWorld() != anchor.getWorld() || dest.distanceSquared(anchor) > tolerance) {
             if (fine) {
@@ -1281,18 +1278,20 @@ public final class BotManager {
      * 今の相手より {@link #RETARGET_MARGIN} ブロック以上近い敵がいるときだけ替える（2 体の間で行ったり来たりしないため）。
      */
     private LivingEntity pickTarget(SoldierBot bot, LivingEntity self, Location anchor, long now) {
-        Settings s = plugin.settings();
+        Settings s = plugin.settings(bot.side);
         double leash = bot.order != null && bot.order.stance() == Order.Stance.PUSH ? s.pushLeash : s.guardLeash;
         boolean currentValid = bot.target != null && validTarget(bot, self, bot.target, anchor, leash)
-                && !chaseBlocked(bot, self, bot.target, now);
+                && !isUnreachableBlocked(bot, self, bot.target, now, s)
+                && !plugin.combatOf(bot.type).isChaseBlocked(bot, self, bot.target, now, s);
         if (currentValid && now - bot.lastRetargetTick < s.retargetTicks) {
             return bot.target;
         }
         bot.lastRetargetTick = now;
         LivingEntity best = null;
         double bestD = Double.MAX_VALUE;
-        for (LivingEntity e : enemies(bot.side)) {
-            if (!validTarget(bot, self, e, anchor, leash) || chaseBlocked(bot, self, e, now)) {
+        for (LivingEntity e : plugin.teams().enemies(bot.side)) {
+            if (!validTarget(bot, self, e, anchor, leash) || isUnreachableBlocked(bot, self, e, now, s)
+                    || plugin.combatOf(bot.type).isChaseBlocked(bot, self, e, now, s)) {
                 continue;
             }
             double d = e.getLocation().distanceSquared(self.getLocation());
@@ -1310,22 +1309,44 @@ public final class BotManager {
         return best;
     }
 
+    /**
+     * 追っても着けなかった敵（{@link SoldierBot#unreachableTargets}）で、今は狙わないか。
+     * 期限の間でも、攻撃・射撃が届く位置にいる敵は外さない。
+     */
+    private static boolean isUnreachableBlocked(SoldierBot bot, LivingEntity self, LivingEntity enemy, long now,
+                                                Settings s) {
+        Long until = bot.unreachableTargets.get(enemy.getUniqueId());
+        if (until == null || now >= until) {
+            return false;
+        }
+        if (!self.hasLineOfSight(enemy)) {
+            return true;
+        }
+        boolean inReach = switch (bot.type) {
+            case ARCHER -> self.getLocation().distance(enemy.getLocation()) <= s.archerRange;
+            case SPEARMAN -> Formation.reachDistance(self, enemy) <= s.unit(UnitType.SPEARMAN).attackRange;
+            default -> self.getLocation().distance(enemy.getLocation()) <= s.unit(UnitType.SOLDIER).attackRange;
+        };
+        return !inReach;
+    }
+
     private boolean validTarget(SoldierBot bot, LivingEntity self, LivingEntity e, Location anchor, double leash) {
         if (e == self || !e.isValid() || e.isDead() || e.getWorld() != self.getWorld()) {
             return false;
         }
-        if (sideOf(e) != bot.side.opposite()) {
+        if (plugin.teams().sideOf(e) != bot.side.opposite()) {
             return false;
         }
         if (e instanceof Player p && byEntity(p) == null
                 && (!p.isOnline() || p.getGameMode() == GameMode.CREATIVE || p.getGameMode() == GameMode.SPECTATOR)) {
             return false;
         }
-        Settings s = plugin.settings();
+        Settings s = plugin.settings(bot.side);
         double d2 = e.getLocation().distanceSquared(self.getLocation());
         // 弓兵は、見えて units.archer.range 以内の敵なら、構え（積極的・持ち場優先）や持ち場からの距離に関係なく撃つ。
-        // それ以外の敵（見えない・遠い）は剣兵と同じ条件で狙い、近づくのは持ち場から leash の内だけ（archerMove）
-        if (bot.type == UnitType.ARCHER && d2 <= s.archerRange * s.archerRange && self.hasLineOfSight(e)) {
+        // それ以外の敵（見えない・遠い）は剣兵と同じ条件で狙い、近づくのは持ち場から leash の内だけ（Archers.tickCombatMove）
+        double ranged = s.rangedEngageRadius(bot.type);
+        if (ranged > 0 && d2 <= ranged * ranged && self.hasLineOfSight(e)) {
             return true;
         }
         if (d2 > s.engageRadius * s.engageRadius) {
@@ -1337,17 +1358,5 @@ public final class BotManager {
             return false;
         }
         return d2 <= SENSE_RADIUS * SENSE_RADIUS || self.hasLineOfSight(e);
-    }
-
-    /** 敵: 敵の陣営のプレイヤー・ボットと、敵のチームに入っているモブ。 */
-    List<LivingEntity> enemies(Side side) {
-        List<LivingEntity> r = new ArrayList<>(humans(side.opposite()));
-        for (SoldierBot b : of(side.opposite())) {
-            if (b.npc.isSpawned() && b.npc.getEntity() instanceof LivingEntity le) {
-                r.add(le);
-            }
-        }
-        r.addAll(mobs(side.opposite()));
-        return r;
     }
 }

@@ -9,6 +9,7 @@ import java.util.UUID;
 import net.citizensnpcs.api.npc.NPC;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Display;
 import org.bukkit.entity.Entity;
@@ -20,10 +21,11 @@ import org.joml.AxisAngle4f;
 import org.joml.Vector3f;
 
 /**
- * ボットの頭の上の名前を、同じ陣営のプレイヤーにだけ見せる。
+ * ボットの頭の上の名前を出す。設定が team なら同じ陣営のプレイヤーにだけ、all なら全員に見せる。
  *
- * <p>Citizens の名前の表示（ネームプレート）はプレイヤーごとには出し分けられないので、team モードでは
- * Citizens の表示を消し、代わりにボットに乗せた {@link TextDisplay} を、同じ陣営のプレイヤーにだけ見せる。
+ * <p>Citizens の名前の表示（ネームプレート）はプレイヤーごとには出し分けられず、文字色も変えられないので、
+ * team でも all でも Citizens の表示を消し、代わりにボットに乗せた {@link TextDisplay} を使う。
+ * 文字色は所属チームの色（色が未設定なら白）。
  * メインスレッドからだけ呼ぶ。
  */
 final class NameTags {
@@ -34,10 +36,14 @@ final class NameTags {
     /** ボット 1 体分の表示と、今その表示を見せているプレイヤー。 */
     private static final class Tag {
         final TextDisplay display;
+        final boolean teamOnly;
+        TextColor color;
         final Set<UUID> viewers = new HashSet<>();
 
-        Tag(TextDisplay display) {
+        Tag(TextDisplay display, boolean teamOnly, TextColor color) {
             this.display = display;
+            this.teamOnly = teamOnly;
+            this.color = color;
         }
     }
 
@@ -51,15 +57,11 @@ final class NameTags {
 
     /**
      * ボットの名前の表示を、設定とボットの状態に合わせる。{@link BotManager#TICK_PERIOD} tick ごとに呼ぶ。
-     * 設定が all なら Citizens の表示に任せ、team なら Citizens の表示を消して自前の表示を出す。
+     * Citizens の表示は常に消し、自前の表示を {@code color}（null なら白）で出す。
+     * 設定が team なら同じ陣営のプレイヤーにだけ、all なら全員に見せる。
      */
-    void update(SoldierBot bot) {
+    void update(SoldierBot bot, TextColor color) {
         NPC npc = bot.npc;
-        if (!plugin.settings().nameTagTeamOnly) {
-            setNameplate(npc, true);
-            remove(bot);
-            return;
-        }
         setNameplate(npc, false);
 
         Entity entity = npc.isSpawned() ? npc.getEntity() : null;
@@ -68,15 +70,24 @@ final class NameTags {
             return;
         }
 
+        boolean teamOnly = plugin.settings(bot.side).nameTagTeamOnly;
+        TextColor useColor = color == null ? NamedTextColor.WHITE : color;
         String key = key(bot);
         Tag tag = tags.get(key);
-        if (tag == null || !tag.display.isValid() || tag.display.getWorld() != entity.getWorld()) {
+        if (tag == null || !tag.display.isValid() || tag.display.getWorld() != entity.getWorld()
+                || tag.teamOnly != teamOnly) {
             remove(bot);
-            tag = new Tag(spawnDisplay(bot, entity));
+            tag = new Tag(spawnDisplay(bot, entity, useColor, teamOnly), teamOnly, useColor);
             tags.put(key, tag);
+        } else if (!useColor.equals(tag.color)) {
+            tag.display.text(Component.text(bot.name(), useColor));
+            tag.color = useColor;
         }
         if (!entity.getPassengers().contains(tag.display)) {
             entity.addPassenger(tag.display);
+        }
+        if (!teamOnly) {
+            return; // all: 既定で全員に見える
         }
 
         // 同じ陣営のプレイヤーにだけ見せる（チームなし・敵の陣営・ボット自身には見せない）
@@ -87,7 +98,7 @@ final class NameTags {
             }
             UUID id = p.getUniqueId();
             online.add(id);
-            boolean show = plugin.bots().sideOf(p) == bot.side();
+            boolean show = plugin.teams().sideOf(p) == bot.side();
             if (show && tag.viewers.add(id)) {
                 p.showEntity(plugin, tag.display);
             } else if (!show && tag.viewers.remove(id)) {
@@ -115,12 +126,12 @@ final class NameTags {
         tags.clear();
     }
 
-    private TextDisplay spawnDisplay(SoldierBot bot, Entity entity) {
+    private TextDisplay spawnDisplay(SoldierBot bot, Entity entity, TextColor color, boolean teamOnly) {
         TextDisplay display = entity.getWorld().spawn(entity.getLocation(), TextDisplay.class, d -> {
-            d.text(Component.text(bot.name(), NamedTextColor.WHITE));
+            d.text(Component.text(bot.name(), color));
             d.setBillboard(Display.Billboard.CENTER);
             d.setPersistent(false);
-            d.setVisibleByDefault(false);
+            d.setVisibleByDefault(!teamOnly);
             d.setSeeThrough(false);
             d.setShadowed(true);
             d.setTransformation(new Transformation(new Vector3f(0f, LIFT, 0f), new AxisAngle4f(),

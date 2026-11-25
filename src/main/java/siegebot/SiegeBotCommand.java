@@ -6,12 +6,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabExecutor;
-import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 
 /** 管理用の /siegebot（/sb）コマンド。ボットの出し入れ、リスポーン地点、方針の直接設定、試験用の道具。 */
@@ -20,14 +20,16 @@ public final class SiegeBotCommand implements TabExecutor {
     private static final String PREFIX = "[SiegeBot] ";
     private static final Pattern BOT_NAME = Pattern.compile("[A-Za-z0-9_]{1,16}");
     private static final List<String> SUBS = List.of(
-            "help", "revive", "picks", "spawn", "remove", "list", "spawnpoint", "set", "tp", "protect", "debug", "reload");
+            "help", "revive", "picks", "spawn", "remove", "list", "spawnpoint", "set", "tp", "protect", "map", "debug", "reload");
     private static final List<String> SIDES = List.of("attack", "defend");
     private static final List<String> STANCES = List.of("push", "guard");
 
     private final SiegeBotPlugin plugin;
+    private final BotDebugView debugView;
 
     public SiegeBotCommand(SiegeBotPlugin plugin) {
         this.plugin = plugin;
+        this.debugView = new BotDebugView(plugin);
     }
 
     @Override
@@ -44,20 +46,27 @@ public final class SiegeBotCommand implements TabExecutor {
             case "set" -> set(sender, args);
             case "tp" -> tp(sender, args);
             case "protect" -> protect(sender, args);
+            case "map" -> map(sender, args);
             case "debug" -> {
                 if (args.length >= 2 && args[1].equalsIgnoreCase("units")) {
-                    debugUnits(sender);
+                    Side filter = args.length >= 3 ? Side.parse(args[2]) : null;
+                    if (args.length > 3 || (args.length == 3 && filter == null)) {
+                        msg(sender, "使い方: /sb debug units [attack|defend]");
+                    } else {
+                        debugView.debugUnits(sender, filter);
+                    }
                 } else if (args.length >= 2 && args[1].equalsIgnoreCase("kb")) {
-                    GameListener.logKnockback = !GameListener.logKnockback;
-                    msg(sender, "ボットのダメージ・ノックバックのログを" + (GameListener.logKnockback ? "出します" : "止めます")
+                    boolean on = plugin.combatDebug().toggle();
+                    msg(sender, "ボットのダメージ・ノックバックのログを" + (on ? "出します" : "止めます")
                             + "（サーバーのログに出る）。");
                 } else {
-                    debug(sender);
+                    debugView.debug(sender);
                 }
             }
             case "reload" -> {
-                plugin.reloadAll();
-                msg(sender, "config.yml と data.yml を読み直しました。");
+                List<String> warnings = plugin.reloadAll();
+                msg(sender, "config.yml・maps/・data.yml を読み直しました（適用中のマップ: " + plugin.profiles().describeActive() + "）。");
+                warnings.forEach(w -> msg(sender, "警告: " + w));
             }
             default -> {
                 msg(sender, "不明なサブコマンドです: " + args[0]);
@@ -67,7 +76,8 @@ public final class SiegeBotCommand implements TabExecutor {
         return true;
     }
 
-    private static void msg(CommandSender sender, String text) {
+    /** 「[SiegeBot] 」を付けて送り手に 1 行送る。 */
+    static void msg(CommandSender sender, String text) {
         sender.sendMessage(PREFIX + text);
     }
 
@@ -76,7 +86,7 @@ public final class SiegeBotCommand implements TabExecutor {
         msg(sender, "/sb revive <プレイヤー|@p|@a|bots|all> [数] [soldier|spearman|archer] - ボットを参戦させる（倒れていれば戻し、足りなければ出す。"
                 + "コマンドブロック用。数は 1 人あたりの体数。兵種を書くとその兵種だけを数えて出す）");
         msg(sender, "/sb picks <プレイヤー|@p|@a|all> [数|add 数] - 兵科選択で兵を呼べる回数を決める・足す・見る（コマンドブロック用）");
-        if (plugin.settings().testBots) {
+        if (anySideTestBots()) {
             msg(sender, "/sb spawn <名前> <attack|defend> [soldier|spearman|archer] - 試験用: 持ち主のいないボットを出す（出した地点を守る）");
         }
         msg(sender, "/sb remove <名前> - ボットを消す");
@@ -85,6 +95,7 @@ public final class SiegeBotCommand implements TabExecutor {
         msg(sender, "/sb set <ボット|*> follow <プレイヤー> | hold | stance <push|guard> - 方針を直接設定する");
         msg(sender, "/sb tp <ボット> [x y z] - ボットを瞬間移動させる（座標なしなら自分の所へ）");
         msg(sender, "/sb protect <ボット> <on|off> - ボットを無敵にする・戻す");
+        msg(sender, "/sb map [list|default|reset|<マップ名>] - マップ別の設定を切り替える・一覧を見る");
         msg(sender, "/sb debug - 各ボットの位置・体力・狙い・方針");
         msg(sender, "/sb reload - 設定の読み直し");
     }
@@ -92,14 +103,19 @@ public final class SiegeBotCommand implements TabExecutor {
     // ---- ボットの出し入れ ----
 
     private void spawn(CommandSender sender, String[] args) {
-        if (!plugin.settings().testBots) {
-            msg(sender, "持ち主のいないボット（/sb spawn）は試験用です。使うには config.yml に test-bots.enabled: true を書いてください。");
-            return;
-        }
         Side side = args.length == 3 || args.length == 4 ? Side.parse(args[2]) : null;
         UnitType type = args.length == 4 ? UnitType.parse(args[3]) : null;
         if (side == null || (args.length == 4 && type == null)) {
-            msg(sender, "使い方: /sb spawn <名前> <attack|defend> [soldier|spearman|archer]");
+            if (!anySideTestBots()) {
+                msg(sender, "持ち主のいないボット（/sb spawn）は試験用です。使うには config.yml に test-bots.enabled: true を書いてください。");
+            } else {
+                msg(sender, "使い方: /sb spawn <名前> <attack|defend> [soldier|spearman|archer]");
+            }
+            return;
+        }
+        if (!plugin.settings(side).testBots) {
+            msg(sender, "持ち主のいないボット（/sb spawn）は試験用です。使うには config.yml に test-bots.enabled: true を書いてください"
+                    + "（" + side.label() + "の設定で false になっています）。");
             return;
         }
         String name = args[1];
@@ -156,35 +172,16 @@ public final class SiegeBotCommand implements TabExecutor {
                 msg(sender, "数は 1 以上の整数で書いてください。" + usage);
                 return;
             }
-            int max = plugin.settings().maxBotsPerPlayer;
-            if (count > max) {
-                msg(sender, "1 人あたりの上限（personal-bots.max-per-player）は " + max + " 体なので、" + max + " 体にします。");
-                count = max;
-            }
+            // 上限（personal-bots.max-per-player）は陣営ごとに違いうるので、BotManager#revive が陣営ごとに数える
         }
         String arg = args[1];
         boolean all = arg.equalsIgnoreCase("all");
-        List<Player> players = new ArrayList<>();
-        if (all) {
-            players.addAll(Bukkit.getOnlinePlayers());
-        } else if (arg.startsWith("@")) {
-            try {
-                for (org.bukkit.entity.Entity e : Bukkit.selectEntities(sender, arg)) {
-                    if (e instanceof Player p && plugin.bots().byEntity(p) == null) {
-                        players.add(p);
-                    }
-                }
-            } catch (IllegalArgumentException e) {
-                msg(sender, "セレクタが正しくありません: " + arg);
-                return;
+        List<Player> players = new ArrayList<>(); // bots は持ち主のいないボットだけを戻すので、プレイヤーは選ばない
+        if (!arg.equalsIgnoreCase("bots")) {
+            players = selectPlayers(sender, arg);
+            if (players == null) {
+                return; // 理由は selectPlayers が伝えた
             }
-        } else if (!arg.equalsIgnoreCase("bots")) {
-            Player p = Bukkit.getPlayerExact(arg);
-            if (p == null) {
-                msg(sender, "プレイヤー " + arg + " はオンラインではありません。");
-                return;
-            }
-            players.add(p);
         }
 
         List<String> parts = new ArrayList<>();
@@ -213,7 +210,7 @@ public final class SiegeBotCommand implements TabExecutor {
             parts.add((type == null ? "" : type.label() + "が") + "参戦 " + spawned + "体・もともと参戦中 " + alive + "体");
         }
         if (capped > 0) {
-            parts.add("1 人あたりの上限（personal-bots.max-per-player: " + plugin.settings().maxBotsPerPlayer
+            parts.add("1 人あたりの上限（personal-bots.max-per-player: " + maxPerPlayerLabel()
                     + "）に届いたので " + capped + "体は出せませんでした（ほかの兵種のボットも数に入ります）");
         }
         for (Map.Entry<BotManager.ReviveReport.Status, List<String>> e : failed.entrySet()) {
@@ -225,7 +222,7 @@ public final class SiegeBotCommand implements TabExecutor {
             parts.add(label + " " + e.getValue().size() + "人（" + String.join("、", e.getValue()) + "）");
         }
         // 持ち主のいないボット（/sb spawn）は試験用（test-bots.enabled のときだけ）
-        if (plugin.settings().testBots && (all || arg.equalsIgnoreCase("bots"))) {
+        if (anySideTestBots() && (all || arg.equalsIgnoreCase("bots"))) {
             int adminRevived = plugin.spawnSavedBots(); // 倒れて消えた /sb spawn のボットを、data.yml から出し直す
             parts.add("持ち主のいないボットが参戦 " + adminRevived + "体");
         } else if (arg.equalsIgnoreCase("bots")) {
@@ -241,6 +238,7 @@ public final class SiegeBotCommand implements TabExecutor {
      *   <li>/sb picks &lt;対象&gt; add &lt;数&gt; … 残りの回数に足す（負の数で減らす）</li>
      *   <li>/sb picks &lt;対象&gt;          … 残りの回数を見る</li>
      * </ul>
+     * 数は持ち主本人の分（譲渡中でも本人の分として残る）。表示には、譲渡先と、預かっている分も添える。
      * 対象はプレイヤー名・セレクタ（@p、@a[team=Attack] など）・all（オンラインの全員）。
      */
     private void picks(CommandSender sender, String[] args) {
@@ -274,18 +272,47 @@ public final class SiegeBotCommand implements TabExecutor {
         }
         List<String> parts = new ArrayList<>();
         for (Player p : players) {
-            BotManager bm = plugin.bots();
-            int now = bm.picks(p.getUniqueId());
+            java.util.UUID id = p.getUniqueId();
+            int now = plugin.picks().ownPicks(id);
             int next = set != null ? set : add != null ? Math.max(0, now + add) : now;
-            bm.setPicks(p.getUniqueId(), next);
-            parts.add(p.getName() + " " + next + "回");
-            if (next != now && plugin.bots().sideOf(p) != null) {
+            if (set != null) {
+                plugin.picks().setPicks(id, next);
+            } else if (add != null) {
+                plugin.picks().addPicks(id, add);
+            }
+            parts.add(p.getName() + " " + next + "回" + picksNote(p));
+            if (next != now && plugin.teams().sideOf(p) != null) {
                 p.sendMessage(net.kyori.adventure.text.Component.text("[SiegeBot] ", net.kyori.adventure.text.format.NamedTextColor.GOLD)
                         .append(net.kyori.adventure.text.Component.text("兵科選択で兵を呼べる回数: " + next + " 回",
                                 net.kyori.adventure.text.format.NamedTextColor.WHITE)));
+                // 譲渡中なら、代わりに使える指揮者（オンラインで同じチーム）にも知らせる
+                Delegations.Entry del = plugin.delegations().entryOf(id);
+                Player cmd = del == null ? null : Bukkit.getPlayer(del.commander());
+                if (cmd != null && cmd.isOnline() && plugin.teams().sideOf(cmd) == plugin.teams().sideOf(p)) {
+                    cmd.sendMessage(net.kyori.adventure.text.Component.text("[SiegeBot] ", net.kyori.adventure.text.format.NamedTextColor.GOLD)
+                            .append(net.kyori.adventure.text.Component.text(p.getName() + " の兵科選択の回数が " + next
+                                    + " 回になりました（あなたが代わりに使えます）。", net.kyori.adventure.text.format.NamedTextColor.WHITE)));
+                }
             }
         }
         msg(sender, "兵科選択で呼べる回数: " + String.join("、", parts));
+    }
+
+    /** /sb picks の表示の添え書き: 譲渡中なら「（Bobに譲渡中）」、預かりがあれば「（預かり: Alice 3回）」。なければ空。 */
+    private String picksNote(Player p) {
+        List<String> notes = new ArrayList<>();
+        Delegations.Entry del = plugin.delegations().entryOf(p.getUniqueId());
+        if (del != null) {
+            notes.add(del.commanderName() + "に譲渡中");
+        }
+        List<String> held = new ArrayList<>();
+        for (java.util.Map.Entry<java.util.UUID, Integer> e : plugin.picks().delegatedBreakdown(p, plugin.teams().sideOf(p)).entrySet()) {
+            held.add(Bukkit.getOfflinePlayer(e.getKey()).getName() + " " + e.getValue() + "回");
+        }
+        if (!held.isEmpty()) {
+            notes.add("預かり: " + String.join("、", held));
+        }
+        return notes.isEmpty() ? "" : "（" + String.join("、", notes) + "）";
     }
 
     /** 対象（プレイヤー名・セレクタ・all）からオンラインのプレイヤー（ボットを除く）。書き方が誤りなら伝えて null。 */
@@ -339,6 +366,10 @@ public final class SiegeBotCommand implements TabExecutor {
         msg(sender, "ボット一覧:");
         for (SoldierBot b : plugin.bots().all()) {
             String owner = b.owner() == null ? "持ち主なし" : "持ち主 " + Bukkit.getOfflinePlayer(b.owner()).getName();
+            java.util.UUID cmd = plugin.bots().commanderOf(b);
+            if (cmd != null && !cmd.equals(b.owner())) {
+                owner += " → 指揮 " + Bukkit.getOfflinePlayer(cmd).getName();
+            }
             msg(sender, b.name() + " [" + b.side().label() + "・" + b.type().label() + "・" + owner + "] " + b.order().describe()
                     + " / " + (b.alive() ? "生存" : "倒れている"));
         }
@@ -431,7 +462,7 @@ public final class SiegeBotCommand implements TabExecutor {
                     msg(sender, "hold は、ゲーム内で守らせたい所を見て実行してください。");
                     return;
                 }
-                Point point = plugin.bots().lookPoint(p);
+                Point point = plugin.formation().lookPoint(p);
                 if (point == null || args.length > 4) {
                     msg(sender, point == null ? "視点の先にブロックがありません。" : usage);
                     return;
@@ -499,10 +530,72 @@ public final class SiegeBotCommand implements TabExecutor {
             msg(sender, "コンソールからは座標を指定してください。");
             return;
         }
-        b.npc.getNavigator().cancelNavigation(); // 移す前の経路を捨てる（残ると古い経路のまま止まる）
-        // 名前の表示を乗せているので、乗客を残したまま移す
-        b.npc.getEntity().teleport(to, io.papermc.paper.entity.TeleportFlag.EntityState.RETAIN_PASSENGERS);
+        Settings st = plugin.settings(b.side());
+        Location spot = st.separationEnabled
+                ? plugin.separation().findOpenSpot(to, plugin.bots().aliveLocations(List.of(b)), st.separationMinDistance)
+                : to;
+        plugin.bots().teleport(b, spot); // 移す前の経路を捨て、名前の表示を乗せたまま移す
         msg(sender, b.name() + " を移しました。");
+    }
+
+    /** どちらかの陣営の設定で test-bots.enabled が true か。 */
+    private boolean anySideTestBots() {
+        return plugin.settings(Side.ATTACK).testBots || plugin.settings(Side.DEFEND).testBots;
+    }
+
+    /** 1 人あたりの上限の表示: 両陣営で同じなら数、違えば「攻め X / 守り Y」。 */
+    private String maxPerPlayerLabel() {
+        int atk = plugin.settings(Side.ATTACK).maxBotsPerPlayer;
+        int def = plugin.settings(Side.DEFEND).maxBotsPerPlayer;
+        return atk == def ? String.valueOf(atk) : "攻め " + atk + " / 守り " + def;
+    }
+
+    // ---- マップ ----
+
+    /**
+     * /sb map: 適用中のマップを見る・一覧を見る・切り替える。同じマップへの切り替えは何もしない（再読み込みは /sb reload）。
+     */
+    private void map(CommandSender sender, String[] args) {
+        MapProfiles profiles = plugin.profiles();
+        if (args.length == 1) {
+            StringBuilder sb = new StringBuilder("適用中のマップ: " + profiles.describeActive());
+            if (profiles.isFallback(plugin.data().mapName())) {
+                sb.append("（data.yml の ").append(plugin.data().mapName()).append(" が読めないため default）");
+            }
+            if (profiles.hasSideDifferences()) {
+                sb.append("（攻守別設定あり）");
+            }
+            msg(sender, sb.toString());
+            return;
+        }
+        if (args.length > 2) {
+            msg(sender, "使い方: /sb map [list|default|reset|<マップ名>]");
+            return;
+        }
+        String arg = args[1];
+        if (arg.equalsIgnoreCase("list")) {
+            List<String> maps = profiles.listMaps();
+            if (maps.isEmpty()) {
+                msg(sender, "maps/ にマップファイルがありません。");
+                return;
+            }
+            msg(sender, "マップ一覧（maps/）:");
+            for (String m : maps) {
+                msg(sender, "  " + m + (m.equals(profiles.activeMap()) ? "（適用中）" : ""));
+            }
+            return;
+        }
+        SiegeBotPlugin.SwitchResult r = plugin.switchMap(arg);
+        if (!r.ok) {
+            msg(sender, r.error);
+            return;
+        }
+        if (r.alreadyActive) {
+            msg(sender, "すでにマップ " + r.label + " が適用中です（再読み込みは /sb reload）。");
+            return;
+        }
+        msg(sender, "マップを " + r.label + " に切り替えました。");
+        r.warnings.forEach(w -> msg(sender, "警告: " + w));
     }
 
     private void protect(CommandSender sender, String[] args) {
@@ -514,88 +607,6 @@ public final class SiegeBotCommand implements TabExecutor {
         boolean on = args[2].equalsIgnoreCase("on");
         b.npc.setProtected(on);
         msg(sender, b.name() + " を" + (on ? "無敵にしました。" : "無敵でなくしました。"));
-    }
-
-    /** /sb debug units: 兵種ごとに、今使っている値（combat の値に落ちたものも含む）と装備。設定の確かめ用。 */
-    private void debugUnits(CommandSender sender) {
-        Settings st = plugin.settings();
-        msg(sender, "units.default=" + st.defaultUnit.key());
-        for (UnitType t : UnitType.values()) {
-            Settings.Unit u = st.unit(t);
-            List<String> eq = new ArrayList<>();
-            for (Map.Entry<String, org.bukkit.inventory.ItemStack> e : u.equipment.entrySet()) {
-                io.papermc.paper.datacomponent.item.CustomModelData cmd =
-                        e.getValue().getData(io.papermc.paper.datacomponent.DataComponentTypes.CUSTOM_MODEL_DATA);
-                eq.add(e.getKey() + "=" + e.getValue().getType().getKey().getKey()
-                        + (cmd == null || cmd.strings().isEmpty() ? "" : "(model=" + String.join(",", cmd.strings()) + ")"));
-            }
-            msg(sender, String.format(Locale.ROOT,
-                    "%s: suffix=%s speed=%.2f damage=%.2f defense=%.2f max-health=%.1f attack-range=%.2f attack-delay=%d "
-                            + "aim.turn-speed=%.1f aim.sway=%.2f aim.turn-sway=%.2f shield-durability=%s equipment=[%s]",
-                    t.key(), u.nameSuffix, u.speed, u.damageMultiplier, u.defenseMultiplier, u.maxHealth, u.attackRange,
-                    u.attackDelayTicks, u.aimTurnSpeed, u.aimSway, u.aimTurnSway,
-                    u.shieldDurability > 0 ? String.valueOf(u.shieldDurability) : "盾のまま", String.join(" ", eq)));
-        }
-        msg(sender, String.format(Locale.ROOT,
-                "spearman: stop-inside=%.2f back-off-inside=%.2f shield-lower=%dt / archer: range=%.1f min=%.1f keep=%.1f "
-                        + "draw=%dt interval=%dt speed=%.2f damage=%.2f inaccuracy=%.2f",
-                st.spearStopInside, st.spearBackOffInside, st.spearShieldLowerAfterTicks, st.archerRange,
-                st.archerMinDistance, st.archerKeepDistance, st.archerDrawTicks, st.archerShotIntervalTicks,
-                st.archerArrowSpeed, st.archerArrowDamage, st.archerInaccuracy));
-        msg(sender, String.format(Locale.ROOT,
-                "combat: engage=%.1f push-leash=%.1f guard-leash=%.1f follow=%.1f arrive=%.1f path=%.0f fall-damage=%b "
-                        + "regen=%.1f/%dt delay=%dt / shield: enabled=%b lower=%dt / test-bots=%b max=%d / teams=%s,%s",
-                st.engageRadius, st.pushLeash, st.guardLeash, st.followDistance, st.arriveRadius, st.pathRange, st.fallDamage,
-                st.regenAmount, st.regenIntervalTicks, st.regenDelayTicks, st.shieldEnabled, st.shieldLowerAfterTicks,
-                st.testBots, st.maxBotsPerPlayer, st.attackTeam, st.defendTeam));
-    }
-
-    private void debug(CommandSender sender) {
-        if (plugin.bots().all().isEmpty()) {
-            msg(sender, "ボットはいません。");
-        }
-        for (SoldierBot b : plugin.bots().all()) {
-            StringBuilder sb = new StringBuilder(b.name()).append(" [").append(b.side().key()).append("・")
-                    .append(b.type().key()).append("] ");
-            if (!b.alive()) {
-                msg(sender, sb.append("倒れている").toString());
-                continue;
-            }
-            Location l = b.npc.getEntity().getLocation();
-            sb.append(String.format(Locale.ROOT, "pos=(%.1f, %.1f, %.1f)", l.getX(), l.getY(), l.getZ()));
-            if (b.npc.getEntity() instanceof LivingEntity le) {
-                sb.append(String.format(Locale.ROOT, " hp=%.1f", le.getHealth()));
-            }
-            Location anchor = plugin.bots().anchorFor(b);
-            sb.append(anchor == null ? " anchor=なし" : String.format(Locale.ROOT, " anchor=(%.1f, %.1f, %.1f)",
-                    anchor.getX(), anchor.getY(), anchor.getZ()));
-            sb.append(" target=").append(b.target == null ? "なし" : b.target.getName());
-            long webNow = org.bukkit.Bukkit.getCurrentTick();
-            long blocked = b.webBlocked.values().stream().filter(u -> u > webNow).count();
-            if (blocked > 0) {
-                sb.append(" 巣で追わない=").append(blocked);
-            }
-            sb.append(" nav=").append(b.npc.getNavigator().isNavigating());
-            sb.append(" order=").append(b.order().describe());
-            long nowTick = org.bukkit.Bukkit.getCurrentTick();
-            sb.append(" retreat=").append(b.retreating(nowTick) ? (b.retreatUntilTick - nowTick + 19) / 20 + "s" : "なし");
-            if (b.npc.getEntity() instanceof Player bp) {
-                int c = plugin.combat().secondsLeft(bp); // CombatLog で戦闘中なら残りの秒数
-                sb.append(" combat=").append(c > 0 ? c + "s" : "なし");
-                sb.append(" shield=").append(plugin.shields().describe(b));
-                sb.append(" aim=").append(Aim.describe(b, bp));
-                org.bukkit.inventory.ItemStack hand = bp.getInventory().getItemInMainHand();
-                io.papermc.paper.datacomponent.item.CustomModelData cmd =
-                        hand.getData(io.papermc.paper.datacomponent.DataComponentTypes.CUSTOM_MODEL_DATA);
-                sb.append(" hand=").append(hand.getType().getKey().getKey())
-                        .append(cmd == null || cmd.strings().isEmpty() ? "" : "(model=" + String.join(",", cmd.strings()) + ")");
-                String bow = plugin.archers().describe(b);
-                if (bow != null) {
-                    sb.append(" bow=").append(bow);
-                }
-            }
-            msg(sender, sb.toString());
-        }
     }
 
     private static Integer parseInt(String s) {
@@ -634,6 +645,9 @@ public final class SiegeBotCommand implements TabExecutor {
             case "picks" -> n == 2 ? picksTargets() : n == 3 ? List.of("1", "2", "3", "add", "0") : List.of();
             case "spawnpoint" -> n == 2 ? SIDES : n == 3 ? List.of("clear") : List.of();
             case "set" -> completeSet(args);
+            case "map" -> n == 2 ? mapCandidates() : List.of();
+            case "debug" -> n == 2 ? List.of("units", "kb")
+                    : n == 3 && args[1].equalsIgnoreCase("units") ? SIDES : List.of();
             default -> List.of();
         };
         String t = args[n - 1].toLowerCase(Locale.ROOT);
@@ -643,6 +657,12 @@ public final class SiegeBotCommand implements TabExecutor {
                 r.add(c);
             }
         }
+        return r;
+    }
+
+    private List<String> mapCandidates() {
+        List<String> r = new ArrayList<>(List.of("default", "reset", "list"));
+        r.addAll(plugin.profiles().listMaps());
         return r;
     }
 
@@ -668,7 +688,9 @@ public final class SiegeBotCommand implements TabExecutor {
         return n == 4 ? STANCES : List.of();
     }
 
-    private static final List<String> TYPES = List.of("soldier", "spearman", "archer");
+    /** タブ補完に出す兵種の順（剣兵・槍兵・弓兵。enum の宣言順とは違う）。 */
+    private static final List<String> TYPES = Stream.of(UnitType.SOLDIER, UnitType.SPEARMAN, UnitType.ARCHER)
+            .map(UnitType::key).toList();
 
     /** revive の 3・4 番目: まだ書いていない方（数・兵種）の候補。 */
     private static List<String> reviveExtras(String[] args) {

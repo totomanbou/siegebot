@@ -22,6 +22,8 @@ public final class SiegeData {
     private final Map<Side, Point> spawns = new EnumMap<>(Side.class);
     private final Map<String, Side> bots = new LinkedHashMap<>();
     private final Map<String, UnitType> botTypes = new LinkedHashMap<>();
+    /** 適用中のマップ名（null = 既定。maps/&lt;名前&gt;.yml）。 */
+    private String mapName;
 
     public SiegeData(File file, Logger log) {
         this.file = file;
@@ -43,14 +45,28 @@ public final class SiegeData {
         return botTypes;
     }
 
+    /** 適用中のマップ名（null = 既定）。 */
+    public String mapName() {
+        return mapName;
+    }
+
+    public void setMapName(String mapName) {
+        this.mapName = mapName == null || mapName.isBlank() ? null : mapName.trim();
+    }
+
     public void load() {
         spawns.clear();
         bots.clear();
         botTypes.clear();
+        mapName = null;
         if (!file.exists()) {
             return;
         }
         YamlConfiguration y = YamlConfiguration.loadConfiguration(file);
+        String savedMap = y.getString("map");
+        if (savedMap != null && !savedMap.isBlank()) {
+            mapName = savedMap.trim();
+        }
         for (Side s : Side.values()) {
             String key = "spawns." + s.key();
             ConfigurationSection sec = y.getConfigurationSection(key);
@@ -79,8 +95,12 @@ public final class SiegeData {
         }
     }
 
-    public void save() {
+    /** data.yml に書く。書けたら true、書けなければログに出して false。 */
+    public boolean save() {
         YamlConfiguration y = new YamlConfiguration();
+        if (mapName != null) {
+            y.set("map", mapName);
+        }
         for (Map.Entry<Side, Point> e : spawns.entrySet()) {
             String key = "spawns." + e.getKey().key();
             Point p = e.getValue();
@@ -103,8 +123,10 @@ public final class SiegeData {
         y.set("bots", bl);
         try {
             y.save(file);
+            return true;
         } catch (IOException e) {
             log.severe("data.yml を保存できません: " + e.getMessage());
+            return false;
         }
     }
 }

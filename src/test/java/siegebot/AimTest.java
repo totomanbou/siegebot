@@ -1,9 +1,14 @@
 package siegebot;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayDeque;
+import java.util.List;
 import java.util.Random;
+import org.bukkit.util.Vector;
 import org.junit.jupiter.api.Test;
 
 class AimTest {
@@ -269,5 +274,124 @@ class AimTest {
         assertEquals(5.0, Aim.swaySize(0.0, 0.2, 25), EPS);      // もとの揺れ 0 でも回せば揺れる
         assertEquals(3.0, Aim.swaySize(3.0, 0.2, -5), EPS);      // 負の角度は 0 とみなす
         assertEquals(0.0, Aim.swaySize(0.0, 0.0, 10), EPS);
+    }
+
+    // ---- delay（反応の遅れ） ----
+
+    @Test
+    void delayWithNonPositiveTicksClearsHistoryAndReturnsCurrent() {
+        ArrayDeque<Integer> h = new ArrayDeque<>(List.of(1, 2, 3));
+        assertEquals(9, Aim.delay(h, 9, 0));
+        assertTrue(h.isEmpty());
+        h.add(4);
+        assertEquals(8, Aim.delay(h, 8, -3));
+        assertTrue(h.isEmpty());
+    }
+
+    @Test
+    void delayOneTickReturnsPreviousValueAfterColdStart() {
+        ArrayDeque<Integer> h = new ArrayDeque<>();
+        assertEquals(10, Aim.delay(h, 10, 1)); // コールドスタート: 先頭（今の値）
+        assertEquals(10, Aim.delay(h, 11, 1)); // 1 tick 前
+        assertEquals(11, Aim.delay(h, 12, 1));
+        assertEquals(12, Aim.delay(h, 13, 1));
+        assertEquals(2, h.size());
+    }
+
+    @Test
+    void delayTwoTicksReturnsValueTwoTicksAgoAndBoundsHistory() {
+        ArrayDeque<Integer> h = new ArrayDeque<>();
+        assertEquals(1, Aim.delay(h, 1, 2)); // コールドスタート中は先頭の値が残る
+        assertEquals(1, Aim.delay(h, 2, 2));
+        assertEquals(1, Aim.delay(h, 3, 2)); // 3 件たまった: 2 tick 前
+        assertEquals(2, Aim.delay(h, 4, 2));
+        assertEquals(3, Aim.delay(h, 5, 2));
+        assertEquals(3, h.size()); // reactionTicks + 1 を超えない
+    }
+
+    @Test
+    void delayTrimsOldHistoryWhenReactionTicksDecreases() {
+        ArrayDeque<Integer> h = new ArrayDeque<>();
+        for (int i = 1; i <= 5; i++) {
+            Aim.delay(h, i, 3);
+        }
+        assertEquals(4, h.size());
+        // /sb reload で 3 → 1: 古い履歴が切り詰められ、1 tick 前（直前の値）になる
+        assertEquals(5, Aim.delay(h, 6, 1));
+        assertEquals(2, h.size());
+    }
+
+    // ---- acceptWant ----
+
+    @Test
+    void acceptWantOnlyForSameNonNullTarget() {
+        Object a = new Object();
+        Object b = new Object();
+        assertTrue(Aim.acceptWant(a, a));
+        assertFalse(Aim.acceptWant(a, b)); // A → B を null なしで切り替えた
+        assertFalse(Aim.acceptWant(a, null));
+        assertFalse(Aim.acceptWant(null, null));
+    }
+
+    // ---- archerTargetDir / shouldHoldFire ----
+
+    @Test
+    void archerTargetDirUsesDelayedDirForSameTarget() {
+        Object a = new Object();
+        Vector delayed = new Vector(1, 0, 0);
+        Vector current = new Vector(0, 0, 1);
+        assertSame(delayed, Aim.archerTargetDir(delayed, a, a, current));
+        assertSame(current, Aim.archerTargetDir(null, a, a, current));
+    }
+
+    @Test
+    void archerDoesNotFireTowardOldTargetRightAfterSwitch() {
+        Object targetA = new Object();
+        Object targetB = new Object();
+        Vector dirA = new Vector(1, 0, 0);
+        Vector dirB = new Vector(0, 0, 1);
+        // A → B を null なしで切り替えた直後: 履歴は A のまま
+        Vector used = Aim.archerTargetDir(dirA, targetA, targetB, dirB);
+        assertSame(dirB, used);
+        // 照準はまだ A 向き。B 向きの狙いとの誤差は大きく、撃たずに待つ
+        double error = Aim.angleDeg(dirA, used);
+        assertEquals(90.0, error, 1e-6);
+        assertTrue(Aim.shouldHoldFire(error, Aim.angleDeg(used, dirB)));
+    }
+
+    @Test
+    void shouldHoldFireByToleranceAndLagAngle() {
+        assertFalse(Aim.shouldHoldFire(Aim.FIRE_TOLERANCE, 0.0)); // 境界は撃つ
+        assertTrue(Aim.shouldHoldFire(Aim.FIRE_TOLERANCE + 0.01, 0.0));
+        assertFalse(Aim.shouldHoldFire(0.0, Aim.FIRE_MAX_LAG_ANGLE)); // 境界は撃つ
+        // 誤差が許容内でも、遅れによるずれが大きければ待つ
+        assertTrue(Aim.shouldHoldFire(Aim.FIRE_TOLERANCE - 1.0, Aim.FIRE_MAX_LAG_ANGLE + 0.01));
+        assertFalse(Aim.shouldHoldFire(0.5, 5.0));
+    }
+
+    // ---- angleDeg ----
+
+    @Test
+    void angleDegBasicCases() {
+        assertEquals(0.0, Aim.angleDeg(new Vector(1, 2, 3), new Vector(2, 4, 6)), 1e-6);
+        assertEquals(90.0, Aim.angleDeg(new Vector(1, 0, 0), new Vector(0, 1, 0)), 1e-9);
+        assertEquals(180.0, Aim.angleDeg(new Vector(1, 0, 0), new Vector(-3, 0, 0)), 1e-9);
+        assertEquals(0.0, Aim.angleDeg(new Vector(0, 0, 0), new Vector(1, 0, 0)), 0.0);
+        assertEquals(0.0, Aim.angleDeg(new Vector(1, 0, 0), new Vector(0, 0, 0)), 0.0);
+        assertEquals(0.0, Aim.angleDeg(null, new Vector(1, 0, 0)), 0.0);
+        assertEquals(0.0, Aim.angleDeg(new Vector(1, 0, 0), null), 0.0);
+    }
+
+    @Test
+    void angleDegNeverNaNForRoundingOnLargeParallelVectors() {
+        // 丸め誤差で cos が 1 をわずかに超えうる大きな同じ向きのベクトル
+        Vector a = new Vector(0.1e6, 0.3e6, 0.7e6);
+        Vector b = new Vector(0.1e6, 0.3e6, 0.7e6).multiply(3.0);
+        double d = Aim.angleDeg(a, b);
+        assertFalse(Double.isNaN(d));
+        assertEquals(0.0, d, 1e-3);
+        double r = Aim.angleDeg(a, b.clone().multiply(-1));
+        assertFalse(Double.isNaN(r));
+        assertEquals(180.0, r, 1e-3);
     }
 }

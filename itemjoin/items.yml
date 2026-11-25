@@ -1,7 +1,7 @@
 # --{ SiegeBot 用の ItemJoin のアイテム（ItemJoin 6.1.8 で確認）}--
 # plugins/ItemJoin/items.yml をこのファイルで置き換えるか、items: の下の siegebot-baton を既存の items.yml に足してください。
 # 指揮棒を右クリックすると、SiegeBot の指揮メニュー（/sbc menu）が開きます。自分のチームのボットにだけ効きます。
-# 兵科選択のアイテムは ItemJoin ではなく SiegeBot が配ります（/sb picks で呼べる回数を決めると配られ、使い切ると消える）。
+# 兵科選択のアイテムは ItemJoin ではなく SiegeBot が配ります（/sb picks で呼べる回数を決めると配られ、使い切っても消えない）。
 # 置き場所（slot）は 0〜8 がホットバーです。攻城戦の武器と重ならない番号に変えてください。
 
 # 書き換えると ItemJoin がこのファイルを作り直すので、変えないこと。

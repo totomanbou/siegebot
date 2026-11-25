@@ -1,5 +1,7 @@
 package siegebot;
 
+import java.util.ArrayDeque;
+import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -13,6 +15,11 @@ import org.bukkit.util.Vector;
  * 毎 tick、狙う向きへ units.&lt;兵種&gt;.aim.turn-speed（度/tick）までしか回らない。照準は units.&lt;兵種&gt;.aim.sway（度）
  * ほどの大きさでゆっくり揺れ、照準を大きく回した tick ほど大きく揺れる（回した角度 × aim.turn-sway を足す。
  * 揺れは数 tick かけて元の大きさに戻るので、大きく振り向いた直後の攻撃・矢は外れやすい）。
+ *
+ * <p>反応の遅れ（units.&lt;兵種&gt;.aim.reaction-ticks）: 照準を回す先を、その tick 前のものにする。近接は相手の胴の座標、
+ * 弓兵は弾道の向きを遅らせる（弓兵は {@link Archers} が 2 tick ごとに弾道を更新するので、発射時の実効の遅れは 2〜4 tick）。
+ * 盾を構えている間は遅らせず（脅威の向きへすぐ向く）、履歴も消す。相手が変わったときや狙いがなくなったときも履歴を消す。
+ * 弓兵はさらに、遅れによるずれが {@link #FIRE_MAX_LAG_ANGLE} 度を超えている間は撃たない。
  *
  * <ul>
  *   <li>剣兵・槍兵: 攻撃のたびに、揺れを含めた照準の線が相手の当たり判定の箱に入っていれば当たり、外れていれば空振り。
@@ -29,6 +36,8 @@ final class Aim {
     static final double SWAY_KEEP = 0.85;
     /** 弓兵が撃つのは、照準（揺れを除く）が弾道の向きからこの角度（度）以内に来てから。 */
     static final double FIRE_TOLERANCE = 1.5;
+    /** 弓兵の反応の遅れによるずれがこの角度（度）を超えている間は、引き切っていても撃たずに待つ（急な瞬間移動などの安全弁）。 */
+    static final double FIRE_MAX_LAG_ANGLE = 20.0;
     /** 剣兵・槍兵が照準を相手に向け続ける距離（ブロック）。これより遠い相手は体の向きに合わせる。 */
     static final double MELEE_TRACK_DISTANCE = 16.0;
     /** 当たり判定の箱を広げる量（ブロック。サーバーの位置の更新の粗さの分）。 */
@@ -41,13 +50,15 @@ final class Aim {
     }
 
     void tick() {
-        Settings s = plugin.settings();
         for (SoldierBot bot : plugin.bots().all()) {
             if (!bot.npc.isSpawned() || !(bot.npc.getEntity() instanceof Player p)) {
                 bot.aimSet = false;
+                clearHistory(bot);
+                bot.aimWant = null;
+                bot.aimWantTarget = null;
                 continue;
             }
-            update(bot, p, s.unit(bot.type));
+            update(bot, p, plugin.settings(bot.side).unit(bot.type));
         }
     }
 
@@ -58,7 +69,7 @@ final class Aim {
             bot.aimPitch = eye.getPitch();
             bot.aimSet = true;
         }
-        Vector want = wantDirection(bot, p, eye);
+        Vector want = delayedWant(bot, p, eye, u);
         double moved = 0; // 狙って回した角度（相手がいないときに体の向きへ合わせるのは数えない）
         if (want == null) {
             bot.aimYaw = eye.getYaw(); // 狙う相手がいなければ体の向きに合わせる
@@ -78,20 +89,83 @@ final class Aim {
         bot.swayPitch = sway[1];
     }
 
-    /** 照準を向けたい向き（目から）。盾を構えている間は脅威、弓兵は弾道の向き、剣兵・槍兵は相手の胴。なければ null。 */
-    private static Vector wantDirection(SoldierBot bot, Player p, Location eye) {
-        if (bot.shieldUp && bot.blockLook != null && bot.blockLook.getWorld() == eye.getWorld()) {
+    /** 盾を構えていて、脅威の向きに照準を向けるべきか。 */
+    private static boolean shieldLooking(SoldierBot bot, Location eye) {
+        return bot.shieldUp && bot.blockLook != null && bot.blockLook.getWorld() == eye.getWorld();
+    }
+
+    /** 剣兵・槍兵が照準を向け続ける相手か（生きていて、同じ世界で、{@link #MELEE_TRACK_DISTANCE} 以内）。 */
+    private static boolean validMeleeTarget(Player p, LivingEntity t) {
+        return t != null && t.isValid() && !t.isDead() && t.getWorld() == p.getWorld()
+                && t.getLocation().distanceSquared(p.getLocation()) <= MELEE_TRACK_DISTANCE * MELEE_TRACK_DISTANCE;
+    }
+
+    /** 近接で狙う相手の胴の座標。 */
+    private static Vector meleeBody(LivingEntity t) {
+        return t.getLocation().toVector().add(new Vector(0, t.getHeight() * 0.5, 0));
+    }
+
+    /**
+     * 反応の遅れを掛ける前の、照準を向けたい向き（目から）。盾を構えている間は脅威、弓兵は弾道の向き、
+     * 剣兵・槍兵は相手の胴。なければ null。履歴は変更しない（/sb debug からも呼べる）。
+     */
+    private static Vector rawWantDirection(SoldierBot bot, Player p, Location eye) {
+        if (shieldLooking(bot, eye)) {
             return bot.blockLook.toVector().subtract(eye.toVector());
         }
-        if (bot.type == UnitType.ARCHER) {
-            return bot.aimWant == null ? null : bot.aimWant.clone();
+        if (bot.type.usesCustomAim()) {
+            return bot.aimWant == null || !acceptWant(bot.aimWantTarget, bot.target) ? null : bot.aimWant.clone();
         }
         LivingEntity t = bot.target;
-        if (t == null || !t.isValid() || t.isDead() || t.getWorld() != p.getWorld()
-                || t.getLocation().distanceSquared(p.getLocation()) > MELEE_TRACK_DISTANCE * MELEE_TRACK_DISTANCE) {
-            return null;
+        return validMeleeTarget(p, t) ? meleeBody(t).subtract(eye.toVector()) : null;
+    }
+
+    /**
+     * 反応の遅れを掛けた、照準を向けたい向き（目から）。なければ null。
+     * 盾を構えている間は遅らせず履歴を消す。近接は相手の胴の座標、弓兵は弾道の向きを
+     * {@link Settings.Unit#aimReactionTicks} tick 前のものにする。結果は {@link SoldierBot#aimTargetDir} にも残す。
+     */
+    private static Vector delayedWant(SoldierBot bot, Player p, Location eye, Settings.Unit u) {
+        Vector want;
+        if (shieldLooking(bot, eye)) {
+            clearHistory(bot);
+            want = bot.blockLook.toVector().subtract(eye.toVector());
+            bot.aimTargetDir = want.clone();
+        } else if (bot.type.usesCustomAim()) {
+            if (!acceptWant(bot.aimWantTarget, bot.target) || bot.aimWant == null) {
+                clearHistory(bot);
+                want = null;
+            } else {
+                if (bot.aimHistoryTarget != bot.aimWantTarget) {
+                    bot.aimHistory.clear();
+                    bot.aimHistoryTarget = bot.aimWantTarget;
+                }
+                want = delay(bot.aimHistory, bot.aimWant.clone(), u.aimReactionTicks);
+                bot.aimTargetDir = want.clone();
+            }
+        } else {
+            LivingEntity t = bot.target;
+            if (!validMeleeTarget(p, t)) {
+                clearHistory(bot);
+                want = null;
+            } else {
+                if (bot.aimHistoryTarget != t) {
+                    bot.aimHistory.clear();
+                    bot.aimHistoryTarget = t;
+                }
+                Vector delayedBody = delay(bot.aimHistory, meleeBody(t), u.aimReactionTicks);
+                want = delayedBody.clone().subtract(eye.toVector());
+                bot.aimTargetDir = want.clone();
+            }
         }
-        return t.getLocation().toVector().add(new Vector(0, t.getHeight() * 0.5, 0)).subtract(eye.toVector());
+        return want;
+    }
+
+    /** 反応の遅れの履歴と、遅れを掛けた向きを消す。 */
+    private static void clearHistory(SoldierBot bot) {
+        bot.aimHistory.clear();
+        bot.aimHistoryTarget = null;
+        bot.aimTargetDir = null;
     }
 
     /** 照準の向き（単位ベクトル）。withSway なら揺れを含める。照準がまだなければ体の向き。 */
@@ -124,20 +198,74 @@ final class Aim {
         return box.rayTrace(eye, direction(bot, p, true), reach) != null;
     }
 
-    /** /sb debug の表示用。狙いからのずれ（度）と今の揺れ。 */
+    /**
+     * /sb debug の表示用。ずれ = 照準（揺れを除く）と今の want（遅れ前の目標）の差（度）。
+     * 遅れ = 遅延後の目標（{@link SoldierBot#aimTargetDir}）と今の want の差（度）。あわせて今の揺れと回した角度。
+     * 履歴は変更しない（読み取り専用。{@link #delay} は呼ばない）。
+     */
     static String describe(SoldierBot bot, Player p) {
         if (!bot.aimSet) {
             return "なし";
         }
-        Location eye = p.getEyeLocation();
-        Vector want = wantDirection(bot, p, eye);
-        String err = want == null || want.lengthSquared() < 1e-9 ? "相手なし"
-                : String.format(java.util.Locale.ROOT, "ずれ%.1f°", error(bot, p, want));
-        return err + String.format(java.util.Locale.ROOT, "(揺れ%.1f°,回した%.1f°)",
-                Math.hypot(bot.swayYaw, bot.swayPitch), bot.aimMoved);
+        Vector want = rawWantDirection(bot, p, p.getEyeLocation());
+        boolean noWant = want == null || want.lengthSquared() < 1e-9;
+        String err = noWant ? "相手なし" : String.format(Locale.ROOT, "ずれ%.1f°", error(bot, p, want));
+        double lag = noWant || bot.aimTargetDir == null || bot.aimTargetDir.lengthSquared() < 1e-9 ? 0.0
+                : angleDeg(want, bot.aimTargetDir);
+        return err + String.format(Locale.ROOT, "(遅れ%.1f°,揺れ%.1f°,回した%.1f°)",
+                lag, Math.hypot(bot.swayYaw, bot.swayPitch), bot.aimMoved);
     }
 
     // ---- 計算だけの部分（テストする） ----
+
+    /**
+     * 反応の遅れ: 今の値を履歴の末尾に積み、reactionTicks tick 前の値（履歴の先頭）を返す。
+     * 履歴が reactionTicks + 1 件に満たない間（開始直後）は、いちばん古い値を返す。
+     * reactionTicks が 0 以下なら履歴を空にして今の値をそのまま返す。設定の読み直しで値が減ったときは古い履歴を切り詰める。
+     */
+    static <T> T delay(ArrayDeque<T> history, T current, int reactionTicks) {
+        if (reactionTicks <= 0) {
+            history.clear();
+            return current;
+        }
+        history.addLast(current);
+        while (history.size() > reactionTicks + 1) {
+            history.removeFirst();
+        }
+        return history.peekFirst();
+    }
+
+    /** 弓兵の弾道の向き（aimWant）を使ってよいか: 計算したときの相手が今の相手と同じ（null どうしは不可）。 */
+    static boolean acceptWant(Object wantTarget, Object target) {
+        return wantTarget != null && wantTarget == target;
+    }
+
+    /**
+     * 弓兵が撃つかの判定に使う「遅れを掛けた向き」。履歴の相手が今の相手と同じときだけ delayedDir、
+     * 相手が切り替わった直後は今の向き（currentDir）にして、古い相手の向きへ撃たないようにする。
+     */
+    static Vector archerTargetDir(Vector delayedDir, Object historyTarget, Object currentTarget, Vector currentDir) {
+        return delayedDir != null && historyTarget == currentTarget ? delayedDir : currentDir;
+    }
+
+    /** 弓兵が撃たずに待つか: 照準の誤差が {@link #FIRE_TOLERANCE} 度を超える、または遅れによるずれが {@link #FIRE_MAX_LAG_ANGLE} 度を超える。 */
+    static boolean shouldHoldFire(double aimErrorDeg, double lagAngleDeg) {
+        return aimErrorDeg > FIRE_TOLERANCE || lagAngleDeg > FIRE_MAX_LAG_ANGLE;
+    }
+
+    /** 2 つのベクトルのなす角（度）。どちらかが null か長さがほぼ 0 なら 0。丸め誤差で acos が NaN にならないよう丸める。 */
+    static double angleDeg(Vector a, Vector b) {
+        if (a == null || b == null) {
+            return 0.0;
+        }
+        double la = a.lengthSquared();
+        double lb = b.lengthSquared();
+        if (la < 1e-12 || lb < 1e-12) {
+            return 0.0;
+        }
+        double cos = Math.max(-1.0, Math.min(1.0, a.dot(b) / Math.sqrt(la * lb)));
+        return Math.toDegrees(Math.acos(cos));
+    }
 
     /** この tick の揺れの大きさ（度）: もとの揺れ + 回した角度 × 1 度あたりの揺れ。負にはしない。 */
     static double swaySize(double sway, double perDegree, double moved) {

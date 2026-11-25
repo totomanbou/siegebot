@@ -1,6 +1,9 @@
 package siegebot;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
@@ -24,11 +27,11 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 
 /**
- * 兵科選択のアイテム（紙）。呼べる回数（{@link BotManager#picks}）が残っている間だけ持たせ、使い切ったら消す。
- * 右クリックで兵科選択の画面（/sbc units）を開く。
+ * 兵科選択のアイテム（紙）。呼べる回数（{@link UnitPicks#picks}）が 1 以上になった人に持たせ、回数を使い切っても消さない
+ * （一度持った人は、サーバーを止めるまでリスポーン・参加のときに持ち直す）。右クリックで兵科選択の画面（/sbc units）を開く。
  *
  * <p>ItemJoin では配らない（ItemJoin は参加・リスポーンのたびに回数と関係なく配り、配る・消すコマンドは
- * プレイヤーに英語の知らせを出すため）。死んでも落とさず、捨てられない。リスポーン・参加のときに回数に合わせ直す。
+ * プレイヤーに英語の知らせを出すため）。死んでも落とさず、捨てられない。
  */
 final class UnitSelectItem implements Listener {
 
@@ -37,6 +40,8 @@ final class UnitSelectItem implements Listener {
 
     private final SiegeBotPlugin plugin;
     private final NamespacedKey key;
+    /** 一度でも紙を持った人（回数が 0 になっても、リスポーン・参加のときに持ち直す）。サーバーを止めると消える。 */
+    private final Set<UUID> holders = new HashSet<>();
 
     UnitSelectItem(SiegeBotPlugin plugin) {
         this.plugin = plugin;
@@ -58,13 +63,14 @@ final class UnitSelectItem implements Listener {
         meta.lore(List.of(
                 Component.text("右クリック: ", NamedTextColor.GRAY).decoration(TextDecoration.ITALIC, false)
                         .append(Component.text("兵科を選んで兵を呼ぶ", NamedTextColor.WHITE)),
-                Component.text("回数を使い切ると消える", NamedTextColor.GRAY).decoration(TextDecoration.ITALIC, false)));
+                Component.text("回数が 0 でも持ったまま（指揮権の譲渡もここから）", NamedTextColor.GRAY)
+                        .decoration(TextDecoration.ITALIC, false)));
         meta.getPersistentDataContainer().set(key, PersistentDataType.BYTE, (byte) 1);
         it.setItemMeta(meta);
         return it;
     }
 
-    /** 回数に合わせる: 残っていれば 1 つ持たせ（なければ足す）、0 なら全部消す。 */
+    /** 持たせる: 回数が残っているか、一度持ったことがあれば 1 つ持たせる（なければ足す）。回数が 0 になっても消さない。 */
     void sync(Player p) {
         if (plugin.bots().byEntity(p) != null) {
             return; // ボット（プレイヤーの姿の NPC）には持たせない
@@ -79,21 +85,16 @@ final class UnitSelectItem implements Listener {
         if (is(p.getItemOnCursor())) {
             have++;
         }
-        boolean want = plugin.bots().picks(p.getUniqueId()) > 0;
+        UUID id = p.getUniqueId();
+        if (have > 0 || plugin.picks().available(p) > 0) {
+            holders.add(id);
+        }
+        boolean want = holders.contains(id);
         if (want && have == 0) {
             if (inv.getItem(SLOT) == null || inv.getItem(SLOT).getType() == Material.AIR) {
                 inv.setItem(SLOT, create());
             } else {
                 inv.addItem(create()); // 持ち物が満杯なら渡せない（次のリスポーン・回数の変更で渡す）
-            }
-        } else if (!want && have > 0) {
-            for (int i = 0; i < inv.getSize(); i++) {
-                if (is(inv.getItem(i))) {
-                    inv.setItem(i, null);
-                }
-            }
-            if (is(p.getItemOnCursor())) {
-                p.setItemOnCursor(null);
             }
         }
     }

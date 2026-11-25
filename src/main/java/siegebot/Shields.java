@@ -41,6 +41,10 @@ final class Shields {
     private static final double COS_ARROW = Math.cos(Math.toRadians(20));
     /** 敵の視線の向きと、敵から自分への向きの差がこの角度未満なら、自分を狙っているとみなす。 */
     private static final double COS_AIM = Math.cos(Math.toRadians(30));
+    /** 槍兵が未発射の弓（構えているだけで矢は飛んでいない）のために足を止めていられる最長の時間（tick）。 */
+    static final int AIM_STOP_MAX_TICKS = 30;
+    /** 上限に達したあと、未発射の弓では止まらない時間（tick）。飛んでくる矢があれば止まる。 */
+    static final int AIM_STOP_COOLDOWN_TICKS = 40;
 
     private final SiegeBotPlugin plugin;
 
@@ -48,18 +52,47 @@ final class Shields {
         this.plugin = plugin;
     }
 
-    /** 脅威。look は構えたときに向く地点、d2 は自分からの距離の 2 乗。 */
-    private record Threat(Location look, double d2) {
+    /** 脅威。look は構えたときに向く地点、d2 は自分からの距離の 2 乗、projectile は飛んでいる矢か（false は未発射の弓）。 */
+    private record Threat(Location look, double d2, boolean projectile) {
+    }
+
+    /** 足を止めるかの判断。nextAimStopStartTick・nextCooldownUntilTick は次の tick に持ち越す値、hitCap は上限に達した。 */
+    record StopDecision(boolean stopping, long nextAimStopStartTick, long nextCooldownUntilTick, boolean hitCap) {
+    }
+
+    /**
+     * 足を止めて脅威の方を向くか。飛んでくる矢（今・lowerAfter 以内に見た）があれば無条件に止まる。
+     * 未発射の弓だけのときは、止まり始めてから {@link #AIM_STOP_MAX_TICKS} までで、超えたら
+     * {@link #AIM_STOP_COOLDOWN_TICKS} の間は未発射の弓では止まらない（構えたまま待つ敵に釘付けにされない）。
+     * lastProjectileThreatTick は最後に矢を見た時刻（見ていなければ Long.MIN_VALUE / 2 など）。
+     */
+    static StopDecision evaluateStop(boolean stopsToBlock, boolean using, boolean projectileNow, long now,
+                                     long lastProjectileThreatTick, int lowerAfter, long aimStopStartTick,
+                                     long cooldownUntilTick) {
+        if (!stopsToBlock || !using) {
+            return new StopDecision(false, -1, cooldownUntilTick, false);
+        }
+        boolean projActive = projectileNow || (now - lastProjectileThreatTick < lowerAfter);
+        if (projActive) {
+            return new StopDecision(true, -1, cooldownUntilTick, false);
+        }
+        if (now < cooldownUntilTick) {
+            return new StopDecision(false, -1, cooldownUntilTick, false);
+        }
+        long start = aimStopStartTick < 0 ? now : aimStopStartTick;
+        if (now - start < AIM_STOP_MAX_TICKS) {
+            return new StopDecision(true, start, cooldownUntilTick, false);
+        }
+        return new StopDecision(false, -1, now + AIM_STOP_COOLDOWN_TICKS, true);
     }
 
     /** 全ボットの盾を判断する。 */
     void tick() {
-        Settings s = plugin.settings();
         long now = Bukkit.getCurrentTick();
         Map<Side, List<LivingEntity>> enemyCache = new EnumMap<>(Side.class);
         for (SoldierBot bot : plugin.bots().all()) {
             try {
-                tickBot(bot, s, now, enemyCache);
+                tickBot(bot, plugin.settings(bot.side), now, enemyCache);
             } catch (RuntimeException e) {
                 plugin.getLogger().warning("ボット " + bot.name + " の盾の処理で例外: " + e);
             }
@@ -70,38 +103,51 @@ final class Shields {
         Player p = playerOf(bot);
         if (p == null) {
             // 倒れた・消えた。構えたままの遅い歩きと向きの指定を戻す（復活後に持ち越さない）
+            bot.shieldStopping = false;
+            bot.aimStopStartTick = -1;
             if (bot.shieldUp) {
                 applyLowered(bot, s);
             }
             return;
         }
         if (!s.shieldEnabled || !hasShield(p) || bot.retreating(now)) {
+            bot.shieldStopping = false;
+            bot.aimStopStartTick = -1;
             lower(bot, p, s); // 退却中は構えない（戦わずに戻る）
             return;
         }
         if (p.hasCooldown(Material.SHIELD)) {
+            bot.shieldStopping = false;
+            bot.aimStopStartTick = -1;
             lower(bot, p, s); // 斧で盾を使えなくされた
             return;
         }
         // 殴り合いの最中は構えない。ただし槍兵は、飛んでくる矢（飛び道具）だけは殴り合いの最中も防ぐ（突くより優先）
         boolean melee = meleeBusy(bot, p, s);
-        boolean projectilesOnly = melee && bot.type == UnitType.SPEARMAN;
+        boolean projectilesOnly = melee && bot.type.blocksProjectilesInMelee();
         if (melee && !projectilesOnly) {
+            bot.shieldStopping = false;
+            bot.aimStopStartTick = -1;
             lower(bot, p, s);
             return;
         }
-        Threat threat = findThreat(bot, p, s, enemyCache.computeIfAbsent(bot.side, plugin.bots()::enemies),
+        Threat threat = findThreat(bot, p, s, enemyCache.computeIfAbsent(bot.side, plugin.teams()::enemies),
                 projectilesOnly);
+        if (threat != null && threat.projectile()) {
+            bot.lastProjectileThreatTick = now;
+        }
         if (threat != null) {
             bot.lastThreatTick = now;
             bot.blockLook = threat.look();
         }
         boolean using = usingShield(p);
         // 槍兵は脅威がなくなったらすぐ下ろす（units.spearman.shield-lower-after-seconds、既定 0）
-        int lowerAfter = bot.type == UnitType.SPEARMAN ? s.spearShieldLowerAfterTicks : s.shieldLowerAfterTicks;
+        int lowerAfter = s.shieldLowerAfterTicks(bot.type);
         boolean want = threat != null
                 || ((bot.shieldUp || using) && now - bot.lastThreatTick < lowerAfter);
         if (!want) {
+            bot.shieldStopping = false;
+            bot.aimStopStartTick = -1;
             lower(bot, p, s);
             return;
         }
@@ -115,7 +161,17 @@ final class Shields {
         } else if (!using && bot.shieldUp) {
             applyLowered(bot, s); // 斧などで盾が下ろされた。次の判断でもう一度構える
         }
-        if (using && bot.blockLook != null && bot.type == UnitType.SPEARMAN) {
+        Threat nowThreat = threat;
+        StopDecision stop = evaluateStop(bot.type.stopsToBlock(), using, nowThreat != null && nowThreat.projectile(), now,
+                bot.lastProjectileThreatTick, lowerAfter, bot.aimStopStartTick, bot.shieldAimStopCooldownUntilTick);
+        bot.shieldStopping = stop.stopping();
+        bot.aimStopStartTick = stop.nextAimStopStartTick();
+        bot.shieldAimStopCooldownUntilTick = stop.nextCooldownUntilTick();
+        if (stop.hitCap()) {
+            plugin.bots().navigationWatch().recordSimple(bot, NavigationWatch.Reason.SHIELD_CAP,
+                    "aimStop>=" + AIM_STOP_MAX_TICKS + "t", now);
+        }
+        if (using && bot.blockLook != null && bot.shieldStopping) {
             // 槍兵は防ぐのを優先: 歩いていても止まって矢の方を向く（歩いている間は Citizens が歩く向きを向かせるため）
             if (bot.npc.getNavigator().isNavigating()) {
                 bot.npc.getNavigator().cancelNavigation();
@@ -128,8 +184,10 @@ final class Shields {
 
     /** 全ボットの盾を下ろし、速さと向きの指定を元に戻す（設定の読み直しの前に呼ぶ）。 */
     void lowerAll() {
-        Settings s = plugin.settings();
         for (SoldierBot bot : plugin.bots().all()) {
+            Settings s = plugin.settings(bot.side);
+            bot.shieldStopping = false;
+            bot.aimStopStartTick = -1;
             Player p = playerOf(bot);
             if (p != null) {
                 lower(bot, p, s);
@@ -319,7 +377,7 @@ final class Shields {
             }
             ProjectileSource src = a.getShooter();
             if (src instanceof Entity se
-                    && (se.getUniqueId().equals(p.getUniqueId()) || plugin.bots().sideOf(se) == bot.side)) {
+                    && (se.getUniqueId().equals(p.getUniqueId()) || plugin.teams().sideOf(se) == bot.side)) {
                 continue; // 自分か味方が撃った矢
             }
             Vector vel = a.getVelocity();
@@ -334,7 +392,7 @@ final class Shields {
             }
             // 撃った者が生き物ならその方を向く（盾は向いている側の攻撃しか防げない）。いなければ矢の位置
             Location look = src instanceof LivingEntity shooter ? shooter.getEyeLocation() : al;
-            best = new Threat(look, d2);
+            best = new Threat(look, d2, true);
         }
 
         for (LivingEntity e : projectilesOnly ? List.<LivingEntity>of() : enemies) {
@@ -357,7 +415,7 @@ final class Shields {
             if (!e.hasLineOfSight(p)) {
                 continue;
             }
-            best = new Threat(enemyEye, d2);
+            best = new Threat(enemyEye, d2, false);
         }
         return best;
     }
