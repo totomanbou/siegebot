@@ -34,8 +34,8 @@ public final class GameListener implements Listener {
 
     /**
      * 持ち主が倒れたら、その専用のボットも倒す（自動では復活しない）。指揮もリセットする: 方針は「ついてこい・持ち場優先」に、
-     * 指示する相手は「全員」に戻す。ただし指揮権を同じチームの生きている人に譲っていれば、兵は倒さず譲渡も続ける
-     * （{@link BotManager#onOwnerDeath}）。
+     * 指示する相手は「全員」に戻す。ただし指揮権を同じチームの生きている人に譲っていれば、兵は倒さずその人が預かり続ける。
+     * 譲渡（回数を譲ること）は必ず解除する（次の命の回数が前の譲渡先に渡らないように。{@link BotManager#onOwnerDeath}）。
      * 譲られていた兵は倒して、その分の回数を持ち主に戻す（持ち主の未使用の回数と指揮権も持ち主に戻る。{@link BotManager#onCommanderDeath}）。
      * 倒れた人の兵科選択の回数（自分の分。譲っていた分も含む）は 0 にする。
      */
@@ -48,8 +48,10 @@ public final class GameListener implements Listener {
         UUID id = dead.getUniqueId();
         plugin.bots().recordPlayerDeath(id);
         plugin.bots().onCommanderDeath(id, dead.getName());
-        plugin.bots().onOwnerDeath(dead); // 譲渡中なら兵は残す。そうでなければ譲渡を解除して兵を倒す
+        int before = plugin.picks().ownPicks(id);
+        plugin.bots().onOwnerDeath(dead); // 譲渡を解除する。譲渡中だった兵は譲渡先が預かり続け、それ以外は倒す
         plugin.picks().setPicks(id, 0); // 死んだら兵科選択の回数は 0（譲渡中の自分の分も）
+        plugin.getLogger().info("死亡: " + dead.getName() + " の兵科選択の回数を " + before + " → 0 にしました");
         if (plugin.playerCommand() != null) {
             plugin.playerCommand().select(dead, null);
             plugin.playerCommand().menu().resetPage(id);

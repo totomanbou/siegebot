@@ -79,7 +79,16 @@ public final class PlayerCommand implements TabExecutor {
                 tell(p, "あなたのボットの指揮権は " + del.commanderName() + " に譲渡中です（戻すには /sbc units）。",
                         NamedTextColor.RED);
             } else {
-                tell(p, "あなたのボットはいません（兵科選択か、コマンドブロックで呼んでください）。", NamedTextColor.RED);
+                String keeper = null;
+                for (SoldierBot b : plugin.bots().ownedBy(p.getUniqueId())) {
+                    if (b.custodian != null) {
+                        keeper = b.custodianName;
+                        break;
+                    }
+                }
+                tell(p, keeper != null
+                        ? "あなたのボットは " + keeper + " が預かっています（戻すには /sbc units の本から「自分に戻す」）。"
+                        : "あなたのボットはいません（兵科選択か、コマンドブロックで呼んでください）。", NamedTextColor.RED);
             }
             return true;
         }

@@ -375,114 +375,217 @@ class UnitPicksTest {
 
     @Test
     void refundableOnlyWhenOwnerHasNotDiedSinceSpawn() {
-        assertTrue(BotManager.refundable(0, 0));
-        assertTrue(BotManager.refundable(3, 3));
-        assertTrue(!BotManager.refundable(0, 1));
-        assertTrue(!BotManager.refundable(2, 5));
+        assertTrue(BotManager.refundable(true, 0, 0));
+        assertTrue(BotManager.refundable(true, 3, 3));
+        assertTrue(!BotManager.refundable(true, 0, 1));
+        assertTrue(!BotManager.refundable(true, 2, 5));
+        assertTrue(!BotManager.refundable(false, 0, 0)); // /sb revive で出た兵（回数を使っていない）は戻さない
     }
 
     /**
-     * A が B に委任 → A が倒れる（兵は残り、回数は 0）→ A が回数をもらって呼び足す → B が倒れる。
-     * B の道連れで倒れた兵のうち、A が倒れる前に呼んだ兵の分は戻らない。
+     * 不具合の再現: A が B に委任したまま倒れ、次の命で回数をもらう。持ち主が倒れたら回数の譲渡は終わる
+     * （{@link BotManager#onOwnerDeath} が譲渡を解除する）ので、B は A の新しい回数を使えない。
+     * 兵は B が預かり続け（custodian）、B が倒れても、その兵の分の回数は戻らない。
      */
     @Test
-    void survivorsOfOwnersDeathAreNotRefundedWhenCommanderDies() {
+    void ownersNextLifePicksAreNotUsableByThePreviousDelegate() {
         int[] life = {0};
-        List<Integer> bots = new ArrayList<>(); // A の生きている兵（出したときの life）
+        List<Integer> custodial = new ArrayList<>(); // A が倒れた後も B が預かっている兵（出したときの life）
+        List<Integer> delegated = new ArrayList<>(); // 今の譲渡で B が指揮している A の兵
         picks.setPicks(A, 3);
         for (int i = 0; i < 3; i++) {
             picks.consumeOne(A);
-            bots.add(life[0]);
+            delegated.add(life[0]);
         }
         del.set(A, B, "Bob");
-        // A が倒れる: 委任は続き、兵は残り、回数は 0
+        // A が倒れる: 譲渡は解除、兵は B が預かる、回数は 0
         life[0]++;
+        assertEquals(B, BotManager.endDelegationOnDeath(del, A).commander());
+        custodial.addAll(delegated);
+        delegated.clear();
         picks.setPicks(A, 0);
-        assertTrue(del.isDelegated(A));
-        assertEquals(3, bots.size());
-        // リスポーン後に 2 回もらい、B 経由で 2 体呼ぶ（A の枠。上限 5）
+        // 次の命で 2 回もらう: B は使えず、A は使える
         picks.setPicks(A, 2);
+        assertEquals(0, picks.available(B, ALL, ALL));
+        assertEquals(2, picks.available(A, ALL, ALL));
+        assertEquals(UnitPicks.PickChoice.Status.NO_PICKS,
+                picks.peekOriginFor(B, ALL, ALL, o -> true).status());
+        // A がこの命でもう一度譲れば、そのときから B が使える（A の枠。上限 5 に 3 体の預かり兵も数える）
+        del.set(A, B, "Bob");
         for (int i = 0; i < 2; i++) {
-            UnitPicks.PickChoice c = picks.peekOriginFor(B, ALL, ALL, o -> bots.size() < 5);
+            UnitPicks.PickChoice c = picks.peekOriginFor(B, ALL, ALL,
+                    o -> custodial.size() + delegated.size() < 5);
             assertEquals(UnitPicks.PickChoice.Status.OK, c.status());
             picks.consumeOne(c.originOwner());
-            bots.add(life[0]);
+            delegated.add(life[0]);
         }
-        assertEquals(0, picks.ownPicks(A));
+        assertEquals(UnitPicks.PickChoice.Status.NO_PICKS,
+                picks.peekOriginFor(B, ALL, ALL, o -> true).status());
+        // B が倒れる: 預かり兵（前の命）は戻さず、この命で呼んだ 2 体の分だけ戻る
+        custodial.clear();
         BotManager.handleCommanderDeath(del, picks, B, owner -> {
             int refund = 0;
-            for (int l : bots) {
-                if (BotManager.refundable(l, life[0])) {
+            for (int l : delegated) {
+                if (BotManager.refundable(true, l, life[0])) {
                     refund++;
                 }
             }
-            bots.clear();
+            delegated.clear();
             return refund;
         }, ALL, deferred::add, (owner, n) -> notices.add(Map.entry(owner, n)));
         runDeferred();
-        assertEquals(2, picks.ownPicks(A)); // 倒れる前の 3 体の分は戻らない
+        assertEquals(2, picks.ownPicks(A));
         assertEquals(List.of(Map.entry(A, 2)), notices);
     }
 
     /**
-     * 「呼ぶ → 委任 → 持ち主が倒れる → 回数をもらう → 呼ぶ → 指揮官が倒れる」を乱数で繰り返しても、
-     * 兵は上限を超えず、回数は「今の命でもらった回数」を超えない（倒れても兵・回数が増えない）。
+     * 「回数をもらう・呼ぶ・/sb revive で出す・譲渡する・持ち主が倒れる・指揮官が倒れる・取り戻す」を乱数で繰り返しても、
+     * 兵は上限を超えず、回数は「今の命でもらった回数」を超えず、前の譲渡先は持ち主がこの命で譲るまで回数を使えない。
+     * 持ち主が倒れたときの扱いは {@link BotManager#onOwnerDeath} と同じ（譲渡を解除し、譲渡中の兵は預かり兵にする）。
      */
     @Test
     void dyingWhileDelegatedNeverGrowsBotsOrPicks() {
-        final int max = 5;
+        final int max = 30;
         for (long seed = 0; seed < 200; seed++) {
             Random rnd = new Random(seed);
             Delegations d = new Delegations();
             UnitPicks p = new UnitPicks(d, id -> { });
             int[] life = {0};
-            List<Integer> bots = new ArrayList<>();
+            List<Bot> own = new ArrayList<>();       // A が指揮している兵（譲渡中は B が指揮）
+            List<Bot> custodial = new ArrayList<>(); // A が倒れた後も B が預かっている兵
             int grantedThisLife = 0;
+            int maxGrantPerLife = 0; // これまでの命で、1 つの命にもらった回数の最大
             List<Runnable> later = new ArrayList<>();
             for (int step = 0; step < 300; step++) {
-                switch (rnd.nextInt(6)) {
+                switch (rnd.nextInt(7)) {
                     case 0 -> { // コマンドブロックで回数をもらう
                         int g = rnd.nextInt(4);
                         p.addPicks(A, g);
                         grantedThisLife += g;
+                        maxGrantPerLife = Math.max(maxGrantPerLife, grantedThisLife);
                     }
-                    case 1 -> { // 呼ぶ（委任中なら B が A の回数で呼ぶ）
+                    case 1 -> { // 呼ぶ（譲渡中なら B が A の回数で呼ぶ。上限は A の兵の合計）
                         UUID caller = d.isDelegated(A) ? B : A;
-                        UnitPicks.PickChoice c = p.peekOriginFor(caller, ALL, ALL, o -> bots.size() < max);
+                        int survivors = survivors(own, life[0]) + survivors(custodial, life[0]);
+                        UnitPicks.PickChoice c = p.peekOriginFor(caller, ALL, ALL,
+                                o -> own.size() + custodial.size() < max
+                                        && BotManager.canUsePick(survivors, p.ownPicks(o)));
                         if (c.status() == UnitPicks.PickChoice.Status.OK) {
                             p.consumeOne(c.originOwner());
-                            bots.add(life[0]);
+                            own.add(new Bot(life[0], true));
                         }
                     }
-                    case 2 -> d.set(A, B, "Bob");
-                    case 3 -> { // A が倒れる: 委任中なら兵は残る、そうでなければ倒れる。回数は 0
+                    case 2 -> { // 譲る: 預かり兵もまとめて新しい譲渡に入る
+                        d.set(A, B, "Bob");
+                        own.addAll(custodial);
+                        custodial.clear();
+                    }
+                    case 3 -> { // A が倒れる
                         life[0]++;
-                        if (!d.isDelegated(A)) {
-                            bots.clear();
+                        if (BotManager.endDelegationOnDeath(d, A) != null) {
+                            custodial.addAll(own); // 譲渡中の兵は B が預かり続ける
                         }
+                        own.clear(); // 譲渡していない兵は倒れる
                         p.setPicks(A, 0);
                         grantedThisLife = 0;
                     }
-                    case 4 -> { // B が倒れる: 預かっていた兵は倒れ、戻してよい分だけ次の tick に戻る
+                    case 4 -> { // B が倒れる: 預かり兵は戻さずに倒れ、譲渡中の兵は戻してよい分だけ次の tick に戻る
+                        custodial.clear();
                         BotManager.handleCommanderDeath(d, p, B, owner -> {
                             int refund = 0;
-                            for (int l : bots) {
-                                if (BotManager.refundable(l, life[0])) {
+                            for (Bot bot : own) {
+                                if (BotManager.refundable(bot.paid(), bot.life(), life[0])) {
                                     refund++;
                                 }
                             }
-                            bots.clear();
+                            own.clear();
                             return refund;
                         }, ALL, later::add, (o, n) -> { });
                         later.forEach(Runnable::run);
                         later.clear();
                     }
-                    default -> d.clear(A); // 自分に戻す
+                    case 5 -> { // /sb revive: 回数を使わずに 1 体出す（上限まで。何度でも押せる）
+                        if (own.size() + custodial.size() < max) {
+                            own.add(new Bot(life[0], false));
+                        }
+                    }
+                    default -> { // 自分に戻す
+                        d.clear(A);
+                        own.addAll(custodial);
+                        custodial.clear();
+                    }
                 }
-                assertTrue(bots.size() <= max, "seed=" + seed + " step=" + step);
+                String at = "seed=" + seed + " step=" + step;
+                assertTrue(own.size() + custodial.size() <= max, at);
+                int paidAlive = paid(own) + paid(custodial);
+                assertTrue(paidAlive <= maxGrantPerLife,
+                        at + " 回数で呼んだ兵=" + paidAlive + " 1 つの命の回数の最大=" + maxGrantPerLife);
                 assertTrue(p.ownPicks(A) <= grantedThisLife,
-                        "seed=" + seed + " step=" + step + " picks=" + p.ownPicks(A) + " granted=" + grantedThisLife);
+                        at + " picks=" + p.ownPicks(A) + " granted=" + grantedThisLife);
+                if (!d.isDelegated(A)) {
+                    assertEquals(0, p.available(B, ALL, ALL), at + "（譲渡していないのに B が A の回数を使える）");
+                }
             }
         }
+    }
+
+    /**
+     * 報告された不具合: 「譲渡してから倒れる」を繰り返すと兵が増え続けた（上限 30、1 つの命でもらう回数 3）。
+     * 前の命の生き残りが次の命の回数を先に使うので、持ち主の兵は 3 体より増えない。
+     */
+    @Test
+    void delegateThenDieLoopDoesNotGrowTheArmy() {
+        final int max = 30;
+        Delegations d = new Delegations();
+        UnitPicks p = new UnitPicks(d, id -> { });
+        int life = 0;
+        List<Bot> bots = new ArrayList<>(); // A の生きている兵（倒れない）
+        for (int round = 0; round < 20; round++) {
+            p.setPicks(A, 3); // 役職に入るたびに 3 回
+            UUID caller = round % 2 == 0 ? A : B; // 自分で呼ぶ命と、先に譲って B に呼ばせる命を交互に
+            if (caller == B) {
+                d.set(A, B, "Bob");
+            }
+            while (true) {
+                int survivors = survivors(bots, life);
+                UnitPicks.PickChoice c = p.peekOriginFor(caller, ALL, ALL,
+                        o -> bots.size() < max && BotManager.canUsePick(survivors, p.ownPicks(o)));
+                if (c.status() != UnitPicks.PickChoice.Status.OK) {
+                    break;
+                }
+                p.consumeOne(c.originOwner());
+                bots.add(new Bot(life, true));
+            }
+            d.set(A, B, "Bob"); // 譲ってから
+            life++;             // 倒れる（兵は B が預かって残る）
+            BotManager.endDelegationOnDeath(d, A);
+            p.setPicks(A, 0);
+            assertTrue(bots.size() <= 3, "round=" + round + " bots=" + bots.size());
+        }
+        assertEquals(3, bots.size());
+    }
+
+    private static int survivors(List<Bot> list, int lifeNow) {
+        int n = 0;
+        for (Bot b : list) {
+            if (b.life() < lifeNow) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    private static int paid(List<Bot> list) {
+        int n = 0;
+        for (Bot b : list) {
+            if (b.paid()) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /** シミュレーションの兵 1 体: 出したときの持ち主の life と、回数を使って呼んだか。 */
+    private record Bot(int life, boolean paid) {
     }
 }

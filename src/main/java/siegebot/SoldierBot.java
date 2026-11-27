@@ -22,6 +22,15 @@ public final class SoldierBot {
      * （指揮官が倒れて道連れになっても回数を戻さない）。
      */
     int ownerLife;
+    /**
+     * 持ち主が譲渡中に倒れたとき、この兵を預かり続ける人（譲渡先）。null なら持ち主の譲渡（{@link Delegations}）に従う。
+     * 持ち主の譲渡は倒れた時点で解除するので、次の命の回数は預かり手に渡らない（兵だけが残る）。
+     */
+    UUID custodian;
+    /** 兵科選択の回数を使って呼んだ兵か（/sb revive で出た兵は false）。回数に戻してよいのはこの兵だけ。 */
+    boolean paidWithPick;
+    /** {@link #custodian} の名前（追従の相手を戻すのに使う）。 */
+    String custodianName;
     /** 兵種（出したときに決まり、変わらない）。 */
     final UnitType type;
 

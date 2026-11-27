@@ -317,7 +317,10 @@ public final class CommandMenu implements Listener {
             List<String> lore = new ArrayList<>();
             lore.add("現在: " + have + " 体");
             if (left > 0 && avail.status() == UnitPicks.PickChoice.Status.FULL) {
-                lore.add("上限（" + max + " 体）に届いているので呼べない");
+                int survivors = plugin.bots().survivorsAlive(p.getUniqueId());
+                lore.add(survivors > 0 && plugin.bots().ownedBy(p.getUniqueId()).size() < max
+                        ? "前の命の兵 " + survivors + " 体の分、回数をまだ使えない"
+                        : "上限（" + max + " 体）に届いているので呼べない");
             }
             ItemStack icon = unitIcon(side, t);
             put(h, slots[i], decorate(icon, t.label(), NamedTextColor.AQUA, lore), () -> {
@@ -329,6 +332,8 @@ public final class CommandMenu implements Listener {
                     case FULL -> "ボットの上限（" + max + " 体）に届いているので呼べません。";
                     case NO_TEAM -> "攻め・守りのどちらのチームにも入っていません。";
                     case NO_PLACE -> "出す場所がありません。";
+                    case RESERVED -> "前の命から残っている兵が " + plugin.bots().survivorsAlive(p.getUniqueId())
+                            + " 体いるので、その分の回数はまだ使えません（その兵が倒れると使えます）。";
                 };
                 if (text != null) {
                     tell(p, text, NamedTextColor.RED);

@@ -287,6 +287,14 @@ public final class BotManager {
         for (SoldierBot b : new ArrayList<>(bots.values())) {
             if (b.owner != null && onlineSides.get(b.owner) != b.side) {
                 remove(b.name);
+            } else if (b.custodian != null && onlineSides.get(b.custodian) != b.side) {
+                // 預かり手がオフラインか、別のチーム: 兵は持ち主に戻る
+                String keeperName = b.custodianName;
+                Player op = Bukkit.getPlayer(b.owner);
+                releaseCustody(b, op != null ? op.getName() : null);
+                if (op != null) {
+                    tellPlayer(op, keeperName + " がチームを離れたため、預けていた兵 " + b.name + " が戻りました。");
+                }
             }
         }
     }
@@ -318,7 +326,23 @@ public final class BotManager {
 
     /** そのボットを今指揮する人。持ち主のいないボットは null。 */
     public UUID commanderOf(SoldierBot bot) {
-        return bot.owner == null ? null : effectiveCommander(bot.owner, bot.side);
+        if (bot.owner == null) {
+            return null;
+        }
+        if (bot.custodian != null && isOnlineSameSide(bot.custodian, bot.side)) {
+            return bot.custodian; // 持ち主が倒れた後も預かっている兵
+        }
+        return effectiveCommander(bot.owner, bot.side);
+    }
+
+    /** 預かり手（{@link SoldierBot#custodian}）を外し、その人についていっていたなら持ち主についていかせる（持ち主がいれば）。 */
+    private void releaseCustody(SoldierBot b, String ownerName) {
+        String old = b.custodianName;
+        b.custodian = null;
+        b.custodianName = null;
+        if (ownerName != null) {
+            retarget(List.of(b), old, ownerName);
+        }
     }
 
     /** commander が今指揮しているボット（出した順）。 */
@@ -371,6 +395,15 @@ public final class BotManager {
         String oldLeaderName = oldEntry != null ? oldEntry.commanderName() : owner.getName();
         plugin.delegations().set(ownerId, targetId, target.getName());
         List<SoldierBot> myBots = ownedBy(ownerId);
+        for (SoldierBot b : myBots) {
+            if (b.custodian != null) {
+                // 前の命から預けたままの兵も、新しい譲渡先に渡す
+                String keeperName = b.custodianName;
+                b.custodian = null;
+                b.custodianName = null;
+                retarget(List.of(b), keeperName, target.getName());
+            }
+        }
         retarget(myBots, oldLeaderName, target.getName());
         UUID oldCmdId = oldEntry != null ? oldEntry.commander() : null;
         plugin.picks().syncPlayers(ownerId, targetId, oldCmdId);
@@ -387,18 +420,33 @@ public final class BotManager {
         return true;
     }
 
-    /** owner が譲っていた指揮権を自分に戻す。譲っていなければ false。 */
+    /**
+     * owner が譲っていた指揮権と、前の命から預けたままの兵を自分に戻す。どちらもなければ false。
+     */
     public boolean reclaimCommand(Player owner) {
-        Delegations.Entry prev = plugin.delegations().clear(owner.getUniqueId());
-        if (prev == null) {
+        UUID ownerId = owner.getUniqueId();
+        Delegations.Entry prev = plugin.delegations().clear(ownerId);
+        Set<UUID> keepers = new LinkedHashSet<>();
+        for (SoldierBot b : ownedBy(ownerId)) {
+            if (b.custodian != null) {
+                keepers.add(b.custodian);
+                releaseCustody(b, owner.getName());
+            }
+        }
+        if (prev == null && keepers.isEmpty()) {
             return false;
         }
-        retarget(ownedBy(owner.getUniqueId()), prev.commanderName(), owner.getName());
-        plugin.picks().syncPlayers(owner.getUniqueId(), prev.commander());
+        if (prev != null) {
+            retarget(ownedBy(ownerId), prev.commanderName(), owner.getName());
+            plugin.picks().syncPlayers(ownerId, prev.commander());
+            keepers.add(prev.commander());
+        }
         tellPlayer(owner, "指揮権を自分に戻しました。");
-        Player cmd = Bukkit.getPlayer(prev.commander());
-        if (cmd != null && cmd.isOnline()) {
-            tellPlayer(cmd, owner.getName() + " が指揮権を自分に戻しました。");
+        for (UUID k : keepers) {
+            Player cmd = Bukkit.getPlayer(k);
+            if (cmd != null && cmd.isOnline()) {
+                tellPlayer(cmd, owner.getName() + " が指揮権を自分に戻しました。");
+            }
         }
         return true;
     }
@@ -427,6 +475,21 @@ public final class BotManager {
             }
             plugin.picks().syncPlayers(ownerId, commanderId);
         }
+        // 持ち主が倒れた後も預かっていた兵も、生きたまま持ち主に戻す
+        Map<UUID, Integer> returned = new LinkedHashMap<>();
+        for (SoldierBot b : bots.values()) {
+            if (commanderId.equals(b.custodian)) {
+                Player op = Bukkit.getPlayer(b.owner);
+                releaseCustody(b, op != null && op.isOnline() ? op.getName() : null);
+                returned.merge(b.owner, 1, Integer::sum);
+            }
+        }
+        for (Map.Entry<UUID, Integer> e : returned.entrySet()) {
+            Player op = Bukkit.getPlayer(e.getKey());
+            if (op != null && op.isOnline() && !cleared.containsKey(e.getKey())) {
+                tellPlayer(op, commanderName + " が" + reason + "ため、預けていた兵 " + e.getValue() + " 体が戻りました。");
+            }
+        }
     }
 
     /**
@@ -446,39 +509,71 @@ public final class BotManager {
     }
 
     /**
-     * 指揮官が倒れて道連れになった兵の分を、持ち主の回数に戻してよいか: 兵を出してから持ち主が一度も倒れていないときだけ。
-     * 持ち主の死を越えて生き残った兵（委任先で生き残った兵）を回数に変えられないようにする。
+     * 指揮官が倒れて道連れになった兵の分を、持ち主の回数に戻してよいか: 兵科選択の回数を使って呼んだ兵で（paidWithPick）、
+     * 兵を出してから持ち主が一度も倒れていないときだけ。
+     * 回数を使わずに出た兵（/sb revive）や、持ち主の死を越えて生き残った兵（預かり兵）を回数に変えられないようにする。
      */
-    static boolean refundable(int ownerLifeAtSpawn, int ownerLifeNow) {
-        return ownerLifeAtSpawn == ownerLifeNow;
+    static boolean refundable(boolean paidWithPick, int ownerLifeAtSpawn, int ownerLifeNow) {
+        return paidWithPick && ownerLifeAtSpawn == ownerLifeNow;
     }
 
     /**
-     * 持ち主が倒れたときの、その人の兵の扱い。指揮権を同じチームの生きている人に譲っていれば、兵は倒さず、
-     * 譲渡もそのまま（預かっている人が指揮を続ける。兵の持ち主は変えないので、上限 max-per-player の枠もそのまま使う）。
-     * 譲っていない・譲渡先が無効なら、譲渡を解除し、方針を戻して兵を全部倒す。回数を 0 にするのは呼び出し元。
+     * 持ち主が倒れたときの、その人の兵の扱い。
+     * <ul>
+     *   <li>指揮権を同じチームの生きている人に譲っていれば、出ている兵は倒さず、その人が預かり続ける（{@link SoldierBot#custodian}）。
+     *       兵の持ち主は変えないので、上限 max-per-player の枠もそのまま使う。</li>
+     *   <li>譲渡（{@link Delegations}）そのものは解除する。譲渡が続くと、次の命でもらった回数まで前の譲渡先が使えてしまうため
+     *       （回数を譲るのは、その命で譲ったときだけ）。</li>
+     *   <li>前の命から預けたままの兵（預かり手が有効）は、そのまま。</li>
+     *   <li>それ以外の兵（譲っていない・譲渡先が無効）は、方針を戻して倒す。</li>
+     * </ul>
+     * 回数を 0 にするのは呼び出し元。
      */
+    /**
+     * 持ち主が倒れたときの譲渡の扱い: 譲渡（回数を譲ること）は必ず解除する。解除前の譲渡先を返す（なければ null）。
+     * 解除しないと、次の命でもらった回数まで前の譲渡先が使えてしまう（兵は {@link SoldierBot#custodian} で預かり続ける）。
+     */
+    static Delegations.Entry endDelegationOnDeath(Delegations delegations, UUID owner) {
+        return delegations.clear(owner);
+    }
+
     public void onOwnerDeath(Player dead) {
         UUID id = dead.getUniqueId();
         Side side = plugin.teams().sideOf(dead);
-        Delegations.Entry del = plugin.delegations().entryOf(id);
+        Delegations.Entry del = endDelegationOnDeath(plugin.delegations(), id);
         Player cmd = del == null ? null : Bukkit.getPlayer(del.commander());
-        if (del != null && side != null && cmd != null && !cmd.isDead() && isOnlineSameSide(del.commander(), side)) {
-            List<SoldierBot> keptBots = new ArrayList<>();
-            for (SoldierBot b : ownedBy(id)) {
-                if (b.side == side && b.alive()) {
-                    keptBots.add(b);
-                }
+        boolean keep = del != null && side != null && cmd != null && !cmd.isDead() && isOnlineSameSide(del.commander(), side);
+        int kept = 0;
+        for (SoldierBot b : ownedBy(id)) {
+            if (!b.alive()) {
+                continue;
             }
-            int kept = keptBots.size();
-            retarget(keptBots, dead.getName(), cmd.getName()); // 倒れた持ち主についていっていた兵は、指揮者についていく
-            tellPlayer(cmd, dead.getName() + " が倒れましたが、預かっている兵 " + kept
-                    + " 体はそのまま指揮できます（" + dead.getName() + " の残り回数は 0 になりました）。");
-            return;
+            if (b.custodian != null && isOnlineSameSide(b.custodian, b.side)) {
+                continue; // 前の命から預けたままの兵は、預かり手のところに残す
+            }
+            if (keep && b.side == side) {
+                b.custodian = cmd.getUniqueId();
+                b.custodianName = cmd.getName();
+                retarget(List.of(b), dead.getName(), cmd.getName()); // 倒れた持ち主についていっていた兵は、預かり手についていく
+                retarget(List.of(b), del.commanderName(), cmd.getName());
+                kept++;
+            } else {
+                b.custodian = null;
+                b.custodianName = null;
+                setOrder(b, Order.follow(dead.getName(), Order.Stance.GUARD));
+                b.target = null;
+                killBot(b);
+            }
         }
-        clearDelegationOfOwner(id, dead.getName(), "倒れた");
-        resetOrders(dead);
-        killOwnedBots(id);
+        if (del != null) {
+            plugin.picks().syncPlayers(id, del.commander());
+        }
+        if (keep) {
+            tellPlayer(cmd, dead.getName() + " が倒れましたが、預かっている兵 " + kept + " 体はそのまま指揮できます（"
+                    + dead.getName() + " の残り回数は 0 になり、これからもらう回数はもう譲られません）。");
+        } else if (del != null && cmd != null && cmd.isOnline()) {
+            tellPlayer(cmd, dead.getName() + " が倒れたため、預かっていた指揮権が解除されました。");
+        }
     }
 
     /** 倒れた時刻の記録を捨てる（退出したとき）。 */
@@ -549,6 +644,28 @@ public final class BotManager {
             }
         }
         Map<UUID, Integer> killedByOwner = new HashMap<>(); // 倒れた体数（回数を戻さない兵も含む。知らせる文に使う）
+        // 持ち主が倒れた後も預かっていた兵（前の命の兵）は倒れる。持ち主が倒れる前に呼んだ兵なので回数は戻さない
+        Map<UUID, Integer> custodialKilled = new LinkedHashMap<>();
+        for (SoldierBot b : new ArrayList<>(bots.values())) {
+            if (commanderId.equals(b.custodian)) {
+                b.custodian = null;
+                b.custodianName = null;
+                if (killBot(b)) {
+                    custodialKilled.merge(b.owner, 1, Integer::sum);
+                }
+            }
+        }
+        for (Map.Entry<UUID, Integer> e : custodialKilled.entrySet()) {
+            if (ownerSidesAtDeath.containsKey(e.getKey())) {
+                killedByOwner.merge(e.getKey(), e.getValue(), Integer::sum); // 譲渡中の持ち主には 1 tick 後にまとめて知らせる
+            } else {
+                Player op = Bukkit.getPlayer(e.getKey());
+                if (op != null && op.isOnline()) {
+                    tellPlayer(op, commanderName + " が倒れたため、預けていた兵 " + e.getValue()
+                            + " 体が倒れました（あなたが倒れる前に呼んだ兵なので、回数は戻りません）。");
+                }
+            }
+        }
         handleCommanderDeath(
                 plugin.delegations(),
                 plugin.picks(),
@@ -562,14 +679,15 @@ public final class BotManager {
                     int refund = 0;
                     int lifeNow = ownerLife(ownerId);
                     for (SoldierBot b : ownedBy(ownerId)) {
-                        if (b.side == ownerSide && killBot(b)) {
+                        // 別の人が預かっている前の命の兵には触らない（その預かり手が倒れたときに倒れる）
+                        if (b.side == ownerSide && b.custodian == null && killBot(b)) {
                             killed++;
-                            if (refundable(b.ownerLife, lifeNow)) {
+                            if (refundable(b.paidWithPick, b.ownerLife, lifeNow)) {
                                 refund++; // 持ち主の死を越えて生き残った兵は戻さない
                             }
                         }
                     }
-                    killedByOwner.put(ownerId, killed);
+                    killedByOwner.merge(ownerId, killed, Integer::sum);
                     return refund;
                 },
                 ownerId -> {
@@ -712,7 +830,9 @@ public final class BotManager {
         /** 攻め・守りのどちらのチームにも入っていない */
         NO_TEAM,
         /** 出す場所が決まらなかった */
-        NO_PLACE
+        NO_PLACE,
+        /** 前の命から残っている兵の分、回数を使えない（{@link #canUsePick}） */
+        RESERVED
     }
 
     /**
@@ -727,13 +847,15 @@ public final class BotManager {
         int max = plugin.settings(side).maxBotsPerPlayer;
         UnitPicks.PickChoice choice = plugin.picks().peekOriginFor(p, side, originId -> {
             cleanupInvalidOwned(originId, side);
-            return ownedBy(originId).size() < max;
+            return ownedBy(originId).size() < max && canUsePick(survivorsAlive(originId), plugin.picks().ownPicks(originId));
         });
         if (choice.status() == UnitPicks.PickChoice.Status.NO_PICKS) {
             return SummonResult.NO_PICKS;
         }
         if (choice.status() == UnitPicks.PickChoice.Status.FULL) {
-            return SummonResult.FULL;
+            // 枠に空きがあるのに呼べないなら、前の命の兵の分で回数を使えない
+            UnitPicks.PickChoice byCap = plugin.picks().peekOriginFor(p, side, originId -> ownedBy(originId).size() < max);
+            return byCap.status() == UnitPicks.PickChoice.Status.OK ? SummonResult.RESERVED : SummonResult.FULL;
         }
         UUID originId = choice.originOwner();
         Player originPlayer = Bukkit.getPlayer(originId);
@@ -743,6 +865,7 @@ public final class BotManager {
             return SummonResult.NO_PLACE;
         }
         plugin.picks().consumeOne(originId); // 出せた後にだけ使う
+        b.paidWithPick = true; // 指揮官の道連れで倒れたとき、この兵の分だけ回数に戻せる
         say(b, type.label() + "、参戦した");
         return SummonResult.SPAWNED;
     }
@@ -751,7 +874,32 @@ public final class BotManager {
     public UnitPicks.PickChoice checkSummonAvailability(Player p, Side side) {
         int max = plugin.settings(side).maxBotsPerPlayer;
         return plugin.picks().peekOriginFor(p, side, originId -> ownedBy(originId).stream()
-                .filter(b -> b.side == side && b.alive()).count() < max);
+                .filter(b -> b.side == side && b.alive()).count() < max
+                && canUsePick(survivorsAlive(originId), plugin.picks().ownPicks(originId)));
+    }
+
+    /**
+     * 持ち主の、前の命から生き残っている兵の数（倒れる前に出して、持ち主が倒れた後も出ている兵。預かり兵も、取り戻した兵も数える）。
+     */
+    public int survivorsAlive(UUID owner) {
+        int life = ownerLife(owner);
+        int n = 0;
+        for (SoldierBot b : ownedBy(owner)) {
+            if (b.alive() && b.ownerLife < life) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /**
+     * 兵科選択の回数を 1 使って呼んでよいか: 前の命から生き残っている兵の数より、残りの回数が多いときだけ。
+     * 生き残りの兵は、次の命でもらった回数を 1 体につき 1 回ずつ先に使ったものとして扱う
+     * （譲渡してから倒れる、を繰り返して兵を増やせないようにする。生き残りが倒れれば、その分また使える）。
+     * これで、持ち主の生きている兵は「1 つの命でもらった回数」より多くならない。
+     */
+    static boolean canUsePick(int survivorsAlive, int ownPicks) {
+        return survivorsAlive < ownPicks;
     }
 
     /**
